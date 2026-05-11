@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MeetLoaf mono mark (10C) — used as the macOS menu-bar template image.
+  Camcorder outline + 3 crumb dots on a 22-grid. The system auto-tints
+  this for light/dark appearance, so only alpha matters; black is the
+  convention. The three dots are the only "bread" cue at this size and
+  are what distinguish the mark from a generic camera glyph — keep all
+  three.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">
+  <g fill="none" stroke="black" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M 2 9 Q 2 6 5 6 L 12 6 Q 15 6 15 9 L 15 13 Q 15 16 12 16 L 5 16 Q 2 16 2 13 Z"/>
+    <path d="M 15 9.5 L 19 7.2 Q 19.6 6.8 19.6 7.6 L 19.6 14.4 Q 19.6 15.2 19 14.8 L 15 12.5 Z"/>
+  </g>
+  <g fill="black">
+    <circle cx="6" cy="9.5" r="0.85"/>
+    <circle cx="9.5" cy="11.5" r="1.1"/>
+    <circle cx="11.5" cy="9" r="0.7"/>
+  </g>
+</svg>

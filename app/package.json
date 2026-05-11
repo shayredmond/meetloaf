@@ -1,0 +1,45 @@
+{
+  "name": "meetloaf",
+  "version": "0.1.0",
+  "description": "Standalone Google Meet app for macOS",
+  "main": "main.js",
+  "author": "Shay Redmond",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/REPO.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "icon": "./scripts/build-icon.sh",
+    "dist": "./scripts/build-dmg.sh"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.shayredmond.meetloaf",
+    "productName": "MeetLoaf",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": { "target": "dir", "arch": ["arm64"] },
+      "identity": null,
+      "icon": "icon.icns",
+      "extendInfo": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "Google Meet",
+            "CFBundleURLSchemes": ["meet"]
+          }
+        ],
+        "NSCameraUsageDescription": "Google Meet needs your camera for video calls.",
+        "NSMicrophoneUsageDescription": "Google Meet needs your microphone for audio calls."
+      }
+    },
+    "files": ["main.js", "main-preload.js", "main-inject.js", "config.json", "icon.icns", "trayTemplate.png", "trayTemplate@2x.png", "firefox-extension.xpi", "package.json", "settings/**", "mini/**", "welcome/**"],
+    "extraResources": [
+      { "from": "../extension-chrome", "to": "extension-chrome", "filter": ["**/*"] }
+    ]
+  }
+}

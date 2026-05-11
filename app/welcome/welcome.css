@@ -1,0 +1,227 @@
+:root {
+  --bg: #f5f5f7;
+  --card-bg: #ffffff;
+  --fg: #1d1d1f;
+  --fg-dim: #6e6e73;
+  --accent: #007aff;
+  --row-border: rgba(0, 0, 0, 0.08);
+  --kbd-bg: #f5f5f7;
+  --kbd-border: rgba(0, 0, 0, 0.12);
+  --ghost-hover: rgba(0, 0, 0, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e;
+    --card-bg: #2c2c2e;
+    --fg: #f5f5f7;
+    --fg-dim: #9b9ba0;
+    --accent: #0a84ff;
+    --row-border: rgba(255, 255, 255, 0.08);
+    --kbd-bg: #1c1c1e;
+    --kbd-border: rgba(255, 255, 255, 0.18);
+    --ghost-hover: rgba(255, 255, 255, 0.08);
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+  color: var(--fg);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--card-bg);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+  height: 36px;
+  position: relative;
+}
+
+.close {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.close:hover { background: var(--ghost-hover); color: var(--fg); }
+
+.steps {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 56px;
+  position: relative;
+  overflow: hidden;
+}
+
+.step {
+  width: 100%;
+  text-align: center;
+  animation: fadeIn 0.25s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.step[hidden] { display: none; }
+
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  height: 130px;
+}
+
+.hero-loaf svg { box-shadow: 0 12px 28px rgba(0, 105, 92, 0.35); border-radius: 28px; }
+
+.loaf-accent { color: #00897B; }
+
+.step h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  letter-spacing: -0.01em;
+}
+
+.step p {
+  font-size: 14px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.step ul {
+  margin: 14px auto 0;
+  max-width: 420px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--fg-dim);
+  line-height: 1.6;
+  padding-left: 0;
+  list-style: none;
+}
+
+.step ul li {
+  padding: 6px 0 6px 22px;
+  position: relative;
+}
+
+.step ul li::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 13px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.step ul li strong { color: var(--fg); font-weight: 600; }
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--kbd-bg);
+  border: 1px solid var(--kbd-border);
+  border-radius: 4px;
+  color: var(--fg);
+  vertical-align: 1px;
+}
+
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px 22px;
+  border-top: 1px solid var(--row-border);
+}
+
+.dots {
+  display: flex;
+  gap: 7px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--row-border);
+  transition: background 0.15s, transform 0.15s;
+}
+
+.dot.active {
+  background: var(--accent);
+  transform: scale(1.2);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-primary, .btn-ghost {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  transition: background 0.12s;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+}
+
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-primary:active { filter: brightness(0.92); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--fg);
+}
+
+.btn-ghost:hover { background: var(--ghost-hover); }

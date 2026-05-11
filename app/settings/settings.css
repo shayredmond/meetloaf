@@ -1,0 +1,509 @@
+:root {
+  --bg: #f5f5f7;
+  --fg: #1d1d1f;
+  --fg-dim: #6e6e73;
+  --row-bg: #ffffff;
+  --row-border: rgba(0, 0, 0, 0.08);
+  --capture-bg: #ffffff;
+  --capture-border: rgba(0, 0, 0, 0.15);
+  --capture-fg: #1d1d1f;
+  --capture-empty-fg: #b0b0b3;
+  --capture-recording-bg: #fff8e1;
+  --capture-recording-border: #f5a623;
+  --capture-recording-fg: #8a4f00;
+  --accent: #007aff;
+  --clear-bg: transparent;
+  --clear-fg: #8a8a8e;
+  --clear-bg-hover: rgba(0, 0, 0, 0.06);
+  --ghost-hover: rgba(0, 0, 0, 0.06);
+  --footer-bg: rgba(0, 0, 0, 0.03);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e;
+    --fg: #f5f5f7;
+    --fg-dim: #9b9ba0;
+    --row-bg: #2c2c2e;
+    --row-border: rgba(255, 255, 255, 0.08);
+    --capture-bg: #1c1c1e;
+    --capture-border: rgba(255, 255, 255, 0.15);
+    --capture-fg: #f5f5f7;
+    --capture-empty-fg: #6e6e73;
+    --capture-recording-bg: #3d2f12;
+    --capture-recording-border: #f5a623;
+    --capture-recording-fg: #ffd089;
+    --accent: #0a84ff;
+    --clear-fg: #8e8e93;
+    --clear-bg-hover: rgba(255, 255, 255, 0.08);
+    --ghost-hover: rgba(255, 255, 255, 0.08);
+    --footer-bg: rgba(255, 255, 255, 0.03);
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+}
+
+/* Two-column layout: sidebar nav + content panel */
+.layout {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 8px 16px;
+  border-right: 1px solid var(--row-border);
+  -webkit-app-region: no-drag;
+}
+
+.nav-item {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.nav-item:hover { background: var(--ghost-hover, rgba(0,0,0,0.06)); }
+.nav-item.active { background: var(--accent); color: white; }
+
+.nav-item svg { flex: 0 0 auto; opacity: 0.85; }
+.nav-item.active svg { opacity: 1; }
+
+.panel {
+  padding: 18px 24px 8px;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.panel .section {
+  margin-bottom: 0;
+}
+
+/* Empty top strip is a drag region so the user can grab the window. */
+.drag-region {
+  -webkit-app-region: drag;
+  height: 28px;
+  flex: 0 0 auto;
+}
+
+.section {
+  margin-bottom: 22px;
+}
+
+.section h2 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+.section-desc {
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0 0 14px;
+  padding: 0;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  background: var(--row-bg);
+  border: 1px solid var(--row-border);
+  border-radius: 8px;
+}
+
+.row label {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.recorder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Shortcut rows have a third column for the Global toggle: label | toggle | recorder. */
+.shortcut-row {
+  grid-template-columns: 1fr auto auto;
+}
+
+.global-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.global-label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+
+/* Compact switch for shortcut rows — the macOS-style toggle in .switch is
+   sized for the Window panel; here we want something that visually pairs
+   with the recorder button instead of dominating it. */
+.shortcut-row .switch {
+  width: 30px;
+  height: 18px;
+  border-radius: 18px;
+}
+.shortcut-row .switch .slider {
+  width: 14px;
+  height: 14px;
+}
+.shortcut-row .switch.checked .slider {
+  transform: translateX(12px);
+}
+
+.capture, .clear {
+  -webkit-app-region: no-drag;
+}
+
+.capture {
+  min-width: 140px;
+  padding: 6px 12px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  text-align: center;
+  background: var(--capture-bg);
+  color: var(--capture-fg);
+  border: 1px solid var(--capture-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.capture:hover {
+  border-color: var(--accent);
+}
+
+.capture:focus,
+.capture.recording {
+  outline: none;
+  background: var(--capture-recording-bg);
+  border-color: var(--capture-recording-border);
+  color: var(--capture-recording-fg);
+}
+
+.capture.empty {
+  color: var(--capture-empty-fg);
+  font-style: italic;
+}
+
+.capture.empty:focus,
+.capture.empty.recording {
+  font-style: normal;
+}
+
+.clear {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  background: var(--clear-bg);
+  color: var(--clear-fg);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.row:not([data-empty="true"]) .clear {
+  visibility: visible;
+}
+
+.clear:hover {
+  background: var(--clear-bg-hover);
+}
+
+/* macOS-style toggle switch (button-based, no hidden-input fragility) */
+.toggle-row { grid-template-columns: 1fr auto; }
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  background: rgba(120, 120, 128, 0.32);
+  border: none;
+  border-radius: 22px;
+  cursor: pointer;
+  transition: background 0.18s ease;
+  -webkit-app-region: no-drag;
+}
+
+.switch:focus { outline: none; }
+
+.slider {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.18s ease;
+  pointer-events: none;
+}
+
+.switch.checked { background: #34c759; }
+.switch.checked .slider { transform: translateX(16px); }
+
+@media (prefers-color-scheme: dark) {
+  .switch.checked { background: #30d158; }
+}
+
+.row-help {
+  display: block;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+/* Sub-rows are hidden entirely unless mini mode is selected */
+.sub-row[data-disabled="true"],
+.corner-row[data-disabled="true"] { display: none; }
+
+/* macOS-style segmented control */
+.segmented {
+  display: inline-flex;
+  background: var(--capture-bg);
+  border: 1px solid var(--capture-border);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+/* Full-width segmented control inside the Window-mode row.
+   Override the default 2-column grid so the help text stacks below
+   the segmented control instead of being shoved into the right column. */
+.mode-row {
+  display: block;
+  padding: 6px 6px 10px;
+}
+.mode-row .segmented {
+  display: flex;
+  width: 100%;
+}
+.mode-row .segment {
+  flex: 1;
+  text-align: center;
+  padding: 8px 12px;
+}
+.mode-help {
+  margin-top: 8px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.segment {
+  all: unset;
+  /* `all: unset` resets appearance to its initial value `auto`, which
+     re-enables macOS-native button rendering. The !important is belt-
+     and-suspenders to make sure nothing else in the cascade flips it back. */
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  color: var(--fg);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+
+.segment.selected {
+  background: var(--accent) !important;
+  color: white !important;
+}
+
+.segment:hover {
+  background: rgba(120, 120, 128, 0.12);
+}
+
+.segment.selected:hover {
+  background: var(--accent) !important;
+}
+
+.corner-picker {
+  display: grid;
+  grid-template-columns: repeat(2, 32px);
+  grid-template-rows: repeat(2, 24px);
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.corner {
+  position: relative;
+  width: 32px;
+  height: 24px;
+  background: var(--capture-bg);
+  border: 1px solid var(--capture-border);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.corner:hover {
+  border-color: var(--accent);
+}
+
+.corner .dot {
+  position: absolute;
+  width: 7px;
+  height: 5px;
+  background: var(--fg-dim);
+  border-radius: 1.5px;
+  transition: background 0.12s;
+}
+
+.corner[data-corner="top-left"] .dot     { top: 3px; left: 3px; }
+.corner[data-corner="top-right"] .dot    { top: 3px; right: 3px; }
+.corner[data-corner="bottom-left"] .dot  { bottom: 3px; left: 3px; }
+.corner[data-corner="bottom-right"] .dot { bottom: 3px; right: 3px; }
+
+.corner.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.corner.selected .dot {
+  background: white;
+}
+
+/* Chrome install instructions — numbered list inside the routing tab */
+.routing-help { display: block; padding: 14px 18px; }
+.install-steps {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.55;
+}
+.install-steps li { padding: 2px 0; }
+.install-steps li strong { color: var(--fg); font-weight: 600; }
+.install-steps code {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: var(--ghost-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* About section — config-path row layout: actions stack on the right */
+.config-path-row label { min-width: 0; flex: 1; }
+.config-path-row .row-help {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10px;
+  word-break: break-all;
+  margin-top: 4px;
+}
+.config-path-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* About section — link-styled button */
+.btn-link {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.btn-link:hover { background: rgba(10, 132, 255, 0.1); }
+
+footer {
+  margin-top: 0;
+  padding: 8px 24px;
+  border-top: 1px solid var(--row-border);
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  font-size: 11px;
+  color: var(--fg-dim);
+  min-height: 32px;
+  background: var(--footer-bg);
+}
+
+.status {
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.status.visible { opacity: 1; }

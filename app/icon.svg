@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MeetLoaf primary mark — Crumb Camcorder (10A).
+  Locked to a 1024 grid for clean export. Squircle uses an iOS-style
+  superellipse path so corners read correctly at every dock size.
+  Palette: Meet green family + bread tones (see the brand sheet).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="halo" cx="50%" cy="55%" r="65%">
+      <stop offset="0%"   stop-color="#26A69A" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#00897B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Full-canvas green. macOS Tahoe applies its own squircle/Liquid Glass
+       treatment to icons and wraps undersized content in a default frame;
+       filling the canvas to all four corners avoids that wrapping. -->
+  <g>
+    <rect width="1024" height="1024" fill="#00897B"/>
+    <rect width="1024" height="1024" fill="url(#halo)"/>
+
+    <!-- Camcorder body + lens, rendered as a bread cross-section.
+         Scale 1.3 + bbox-centered translate fills the icon at the same
+         visual weight as native dock icons (Slack, Finder, etc.). -->
+    <g transform="translate(96 288) scale(1.3)">
+      <!-- Outer crust body -->
+      <path fill="#C68642"
+            d="M 0 90 Q 0 0 90 0 L 410 0 Q 500 0 500 90 L 500 254 Q 500 344 410 344 L 90 344 Q 0 344 0 254 Z"/>
+      <!-- Subtle crust top highlight -->
+      <path fill="#D99B5A" opacity="0.6"
+            d="M 0 90 Q 0 0 90 0 L 410 0 Q 500 0 500 90 L 500 110 Q 500 22 410 22 L 90 22 Q 0 22 0 110 Z"/>
+      <!-- Inner crumb fill -->
+      <path fill="#F8E5BA"
+            d="M 36 110 Q 36 36 110 36 L 390 36 Q 464 36 464 110 L 464 234 Q 464 308 390 308 L 110 308 Q 36 308 36 234 Z"/>
+      <!-- Crumb holes — locked rhythmic positions -->
+      <circle cx="130" cy="130" r="22" fill="#E8C485"/>
+      <circle cx="250" cy="100" r="14" fill="#E8C485"/>
+      <circle cx="350" cy="160" r="20" fill="#E8C485"/>
+      <circle cx="180" cy="220" r="16" fill="#E8C485"/>
+      <circle cx="290" cy="240" r="22" fill="#E8C485"/>
+      <circle cx="400" cy="240" r="12" fill="#E8C485"/>
+      <!-- Lens (crust) -->
+      <path fill="#C68642"
+            d="M 500 110 L 620 50 Q 640 42 640 64 L 640 280 Q 640 302 620 294 L 500 234 Z"/>
+      <!-- Lens highlight -->
+      <path fill="#D99B5A"
+            d="M 520 130 L 600 90 L 600 130 L 520 170 Z"/>
+    </g>
+  </g>
+
+</svg>

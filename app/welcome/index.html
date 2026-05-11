@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>Welcome to MeetLoaf</title>
+  <link rel="stylesheet" href="welcome.css" />
+</head>
+<body>
+  <div class="card">
+    <header class="drag-region">
+      <button class="close" id="closeBtn" type="button" aria-label="Close">×</button>
+    </header>
+
+    <main class="steps" id="steps">
+      <!-- Step 1: Welcome -->
+      <section class="step" data-step="0">
+        <div class="hero hero-loaf">
+          <svg viewBox="0 0 1024 1024" width="120" height="120" aria-hidden="true">
+            <defs>
+              <clipPath id="welcomeSquircle">
+                <path d="M 512 0 C 144 0 0 144 0 512 C 0 880 144 1024 512 1024 C 880 1024 1024 880 1024 512 C 1024 144 880 0 512 0 Z"/>
+              </clipPath>
+              <radialGradient id="welcomeHalo" cx="50%" cy="55%" r="65%">
+                <stop offset="0%" stop-color="#26A69A" stop-opacity="0.6"/>
+                <stop offset="100%" stop-color="#00897B" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+            <g clip-path="url(#welcomeSquircle)">
+              <rect width="1024" height="1024" fill="#00897B"/>
+              <rect width="1024" height="1024" fill="url(#welcomeHalo)"/>
+              <g transform="translate(220 340)">
+                <path fill="#C68642" d="M 0 90 Q 0 0 90 0 L 410 0 Q 500 0 500 90 L 500 254 Q 500 344 410 344 L 90 344 Q 0 344 0 254 Z"/>
+                <path fill="#D99B5A" opacity="0.6" d="M 0 90 Q 0 0 90 0 L 410 0 Q 500 0 500 90 L 500 110 Q 500 22 410 22 L 90 22 Q 0 22 0 110 Z"/>
+                <path fill="#F8E5BA" d="M 36 110 Q 36 36 110 36 L 390 36 Q 464 36 464 110 L 464 234 Q 464 308 390 308 L 110 308 Q 36 308 36 234 Z"/>
+                <circle cx="130" cy="130" r="22" fill="#E8C485"/>
+                <circle cx="250" cy="100" r="14" fill="#E8C485"/>
+                <circle cx="350" cy="160" r="20" fill="#E8C485"/>
+                <circle cx="180" cy="220" r="16" fill="#E8C485"/>
+                <circle cx="290" cy="240" r="22" fill="#E8C485"/>
+                <circle cx="400" cy="240" r="12" fill="#E8C485"/>
+                <path fill="#C68642" d="M 500 110 L 620 50 Q 640 42 640 64 L 640 280 Q 640 302 620 294 L 500 234 Z"/>
+                <path fill="#D99B5A" d="M 520 130 L 600 90 L 600 130 L 520 170 Z"/>
+              </g>
+            </g>
+            <path fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="2" d="M 512 0 C 144 0 0 144 0 512 C 0 880 144 1024 512 1024 C 880 1024 1024 880 1024 512 C 1024 144 880 0 512 0 Z"/>
+          </svg>
+        </div>
+        <h1>Welcome to Meet<span class="loaf-accent">Loaf</span></h1>
+        <p>A standalone Google Meet app for macOS — its own window, global hotkeys, and a mini-mode floating panel. Quick tour?</p>
+      </section>
+
+      <!-- Step 2: Global shortcuts -->
+      <section class="step" data-step="1" hidden>
+        <div class="hero">
+          <svg viewBox="0 0 64 64" width="96" height="96" aria-hidden="true">
+            <rect x="6" y="14" width="52" height="36" rx="6" fill="#e8eaed" stroke="#9aa0a6" stroke-width="1.5"/>
+            <rect x="11" y="20" width="6" height="6" rx="1" fill="#9aa0a6"/>
+            <rect x="20" y="20" width="6" height="6" rx="1" fill="#9aa0a6"/>
+            <rect x="29" y="20" width="6" height="6" rx="1" fill="#9aa0a6"/>
+            <rect x="38" y="20" width="6" height="6" rx="1" fill="#9aa0a6"/>
+            <rect x="47" y="20" width="6" height="6" rx="1" fill="#9aa0a6"/>
+            <rect x="11" y="29" width="42" height="6" rx="1" fill="#1a73e8"/>
+            <rect x="11" y="38" width="6" height="6" rx="1" fill="#9aa0a6"/>
+            <rect x="20" y="38" width="24" height="6" rx="1" fill="#9aa0a6"/>
+            <rect x="47" y="38" width="6" height="6" rx="1" fill="#9aa0a6"/>
+          </svg>
+        </div>
+        <h1>Global shortcuts</h1>
+        <p>Mute, toggle your camera, or raise your hand from any app — even when MeetLoaf isn't focused. Configure them in Settings (<kbd>⌘ ,</kbd>) by clicking a shortcut field and pressing the combo you want.</p>
+      </section>
+
+      <!-- Step 3: Window modes -->
+      <section class="step" data-step="2" hidden>
+        <div class="hero modes">
+          <svg viewBox="0 0 240 80" width="240" height="80" aria-hidden="true">
+            <rect x="2" y="14" width="60" height="52" rx="4" fill="#e8eaed" stroke="#9aa0a6"/>
+            <rect x="2" y="14" width="60" height="8" rx="4" fill="#9aa0a6"/>
+            <text x="32" y="74" font-family="-apple-system,sans-serif" font-size="9" fill="#5f6368" text-anchor="middle">Standard</text>
+
+            <rect x="90" y="6" width="60" height="52" rx="4" fill="#e8eaed" stroke="#1a73e8" stroke-width="1.5"/>
+            <rect x="90" y="6" width="60" height="8" rx="4" fill="#1a73e8"/>
+            <text x="120" y="74" font-family="-apple-system,sans-serif" font-size="9" fill="#5f6368" text-anchor="middle">Always on top</text>
+
+            <rect x="178" y="42" width="34" height="22" rx="3" fill="#e8eaed" stroke="#34a853" stroke-width="1.5"/>
+            <text x="195" y="74" font-family="-apple-system,sans-serif" font-size="9" fill="#5f6368" text-anchor="middle">Mini mode</text>
+          </svg>
+        </div>
+        <h1>Three window modes</h1>
+        <p>Pick how MeetLoaf behaves during a call:</p>
+        <ul>
+          <li><strong>Standard</strong> — like a normal window.</li>
+          <li><strong>Always on top</strong> — floats above other apps during a call.</li>
+          <li><strong>Mini mode</strong> — shrinks to a small floating panel when MeetLoaf is covered or hidden.</li>
+        </ul>
+      </section>
+
+      <!-- Step 4: Mini mode details -->
+      <section class="step" data-step="3" hidden>
+        <div class="hero">
+          <svg viewBox="0 0 200 130" width="200" height="130" aria-hidden="true">
+            <rect x="2" y="2" width="196" height="126" rx="10" fill="#1c1d20" stroke="#34c759" stroke-width="3"/>
+            <rect x="60" y="20" width="80" height="50" rx="6" fill="#5b3a8e"/>
+            <circle cx="100" cy="50" r="14" fill="#a78bce"/>
+            <text x="100" y="55" font-family="-apple-system,sans-serif" font-size="14" fill="#fff" text-anchor="middle" font-weight="600">S</text>
+            <circle cx="155" cy="20" r="12" fill="rgba(28,28,30,0.85)" stroke="rgba(255,255,255,0.3)"/>
+            <path d="M152 16 L152 22 M158 16 L158 22 M155 24 L155 26" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="180" cy="20" r="12" fill="rgba(28,28,30,0.85)" stroke="rgba(255,255,255,0.3)"/>
+            <rect x="175" y="16" width="8" height="8" rx="1" fill="white"/>
+            <path d="M183 18 L186 16 L186 22 L183 20 Z" fill="white"/>
+            <circle cx="20" cy="115" r="3" fill="#34c759"/>
+            <text x="32" y="118" font-family="-apple-system,sans-serif" font-size="9" fill="#e8eaed">In a meeting</text>
+          </svg>
+        </div>
+        <h1>Mini mode</h1>
+        <p>A live preview of your meeting in the corner of your screen with hover controls for mute and camera. The border turns <span style="color:#2bc964">green</span> when you're unmuted and <span style="color:#ff3b3b">red</span> when muted, so you can glance and know.</p>
+      </section>
+
+      <!-- Step 5: Done -->
+      <section class="step" data-step="4" hidden>
+        <div class="hero">
+          <svg viewBox="0 0 96 96" width="96" height="96" aria-hidden="true">
+            <circle cx="48" cy="48" r="40" fill="#34a853"/>
+            <path d="M30 48 L44 62 L66 36" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+        </div>
+        <h1>You're all set</h1>
+        <p>Press <kbd>⌘ ,</kbd> any time to open Settings — that's where you'll find shortcuts, window modes, and a button to revisit this tour.</p>
+      </section>
+    </main>
+
+    <footer>
+      <div class="dots" id="dots">
+        <span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+      <div class="actions">
+        <button class="btn-ghost" type="button" id="backBtn" hidden>Back</button>
+        <button class="btn-primary" type="button" id="nextBtn">Next</button>
+      </div>
+    </footer>
+  </div>
+  <script src="welcome.js"></script>
+</body>
+</html>
