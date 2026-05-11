@@ -6,6 +6,11 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# action-gh-release needs contents:write to create the Release.
+# The default GITHUB_TOKEN scope is read-only, hence the v0.1.0 upload failure.
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build arm64 DMG
