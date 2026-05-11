@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>MeetLoaf Mini</title>
+  <link rel="stylesheet" href="mini.css" />
+</head>
+<body>
+  <div class="card" id="card" role="button" tabindex="0" aria-label="Restore MeetLoaf window">
+    <img class="frame" id="frame" alt="" />
+
+    <div class="placeholder" id="placeholder">
+      <svg class="loaf-glyph" viewBox="0 0 22 22" width="48" height="48" aria-hidden="true">
+        <path fill="#9E5821" d="M3.2,12.5 C3.2,7.5 5.5,5 11,5 C16.5,5 18.8,7.5 18.8,12.5 L18.8,16.4 C18.8,17.4 18.1,18 17,18 L5,18 C3.9,18 3.2,17.4 3.2,16.4 Z"/>
+        <g stroke="#3F1F07" stroke-width="0.6" stroke-linecap="round" fill="none" opacity="0.7">
+          <path d="M7.4,8 Q7.9,7.1 8.7,7.5"/>
+          <path d="M9.8,7.6 Q10.3,6.7 11.1,7.1"/>
+          <path d="M12.2,7.6 Q12.7,6.7 13.5,7.1"/>
+        </g>
+      </svg>
+      <div class="placeholder-text">MeetLoaf</div>
+    </div>
+
+    <div class="controls">
+      <button type="button" class="ctrl" id="micBtn" title="Toggle mute" aria-label="Toggle mute">
+        <svg class="ctrl-on" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+        </svg>
+        <svg class="ctrl-off" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>
+        </svg>
+      </button>
+
+      <button type="button" class="ctrl" id="camBtn" title="Toggle camera" aria-label="Toggle camera">
+        <svg class="ctrl-on" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+        </svg>
+        <svg class="ctrl-off" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2 2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="overlay">
+      <span class="status" id="status">Click to restore</span>
+    </div>
+  </div>
+  <script src="mini.js"></script>
+</body>
+</html>

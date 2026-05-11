@@ -1,0 +1,9 @@
+app/node_modules/
+app/dist/
+app/icon.icns
+app/icon.iconset/
+app/trayTemplate.png
+app/trayTemplate@2x.png
+extension/web-ext-artifacts/
+app/firefox-extension.xpi
+.DS_Store

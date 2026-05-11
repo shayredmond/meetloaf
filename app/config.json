@@ -1,0 +1,18 @@
+{
+  "welcomeSeen": false,
+  "shortcuts": {
+    "mute": { "accelerator": "", "global": true },
+    "camera": { "accelerator": "", "global": true },
+    "hand": { "accelerator": "", "global": true },
+    "toggleWindow": { "accelerator": "", "global": true }
+  },
+  "window": {
+    "width": 1200,
+    "height": 800,
+    "alwaysOnTop": false,
+    "miniMode": false,
+    "miniTrigger": "covered",
+    "miniCorner": "bottom-right",
+    "miniSize": "medium"
+  }
+}

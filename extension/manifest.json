@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "MeetLoaf Router",
+  "version": "0.1.0",
+  "description": "Opens Google Meet links in the MeetLoaf desktop app.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "meetloaf@nabucasa.com",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": ["webRequest", "webRequestBlocking", "tabs"],
+  "host_permissions": ["*://meet.google.com/*"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_title": "MeetLoaf Router (enabled)"
+  }
+}
