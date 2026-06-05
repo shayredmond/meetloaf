@@ -257,26 +257,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Window mode — single tri-state radio replacing the previous two toggles.
-  // Underlying config still uses two booleans (alwaysOnTop, miniMode), and we
-  // derive the radio selection from / write to both.
-  const cornerRow = document.getElementById('cornerRow');
-  const triggerRow = document.getElementById('triggerRow');
-  const sizeRow = document.getElementById('sizeRow');
-
-  const modeFromCfg = (window) => {
-    if (window?.alwaysOnTop) return 'alwaysOnTop';
-    if (window?.miniMode) return 'miniMode';
-    return 'standard';
-  };
+  // Window mode — Standard | Always on top. Backed by the alwaysOnTop boolean.
+  const modeFromCfg = (window) => (window?.alwaysOnTop ? 'alwaysOnTop' : 'standard');
 
   const modeButtons = document.querySelectorAll('.mode-segmented .segment');
   const setModeUI = (mode) => {
     modeButtons.forEach((b) => b.classList.toggle('selected', b.dataset.mode === mode));
-    const isMini = mode === 'miniMode';
-    cornerRow.dataset.disabled = isMini ? 'false' : 'true';
-    triggerRow.dataset.disabled = isMini ? 'false' : 'true';
-    sizeRow.dataset.disabled = isMini ? 'false' : 'true';
   };
 
   setModeUI(modeFromCfg(cfg.window));
@@ -288,60 +274,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       setModeUI(mode);
       state.raw.window = {
         ...(state.raw.window || {}),
-        alwaysOnTop: mode === 'alwaysOnTop',
-        miniMode: mode === 'miniMode'
+        alwaysOnTop: mode === 'alwaysOnTop'
       };
-      persistRaw();
-    });
-  });
-
-  // Trigger segmented control — covered | unfocused.
-  // Scoped to #triggerRow so this doesn't also clobber the mode buttons,
-  // which are .segment elements too but have data-mode (not data-value).
-  const segments = document.querySelectorAll('#triggerRow .segment');
-  const setSelectedTrigger = (value) => {
-    segments.forEach((s) => s.classList.toggle('selected', s.dataset.value === value));
-  };
-  setSelectedTrigger((cfg.window && cfg.window.miniTrigger) || 'covered');
-  segments.forEach((seg) => {
-    seg.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const value = seg.dataset.value;
-      setSelectedTrigger(value);
-      state.raw.window = { ...(state.raw.window || {}), miniTrigger: value };
-      persistRaw();
-    });
-  });
-
-  // Size segmented (small | medium | large) — scoped to #sizeRow so it doesn't
-  // collide with the mode buttons or trigger segments.
-  const sizeSegments = document.querySelectorAll('#sizeRow .segment');
-  const setSelectedSize = (value) => {
-    sizeSegments.forEach((s) => s.classList.toggle('selected', s.dataset.size === value));
-  };
-  setSelectedSize((cfg.window && cfg.window.miniSize) || 'medium');
-  sizeSegments.forEach((seg) => {
-    seg.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const value = seg.dataset.size;
-      setSelectedSize(value);
-      state.raw.window = { ...(state.raw.window || {}), miniSize: value };
-      persistRaw();
-    });
-  });
-
-  // Corner picker — radiogroup of 4 buttons. The selected one carries .selected.
-  const corners = document.querySelectorAll('.corner');
-  const setSelectedCorner = (value) => {
-    corners.forEach((b) => b.classList.toggle('selected', b.dataset.corner === value));
-  };
-  setSelectedCorner((cfg.window && cfg.window.miniCorner) || 'bottom-right');
-  corners.forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const value = btn.dataset.corner;
-      setSelectedCorner(value);
-      state.raw.window = { ...(state.raw.window || {}), miniCorner: value };
       persistRaw();
     });
   });

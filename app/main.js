@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, screen, desktopCapturer } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -59,12 +59,8 @@ const MEET_INJECTION = fs.readFileSync(path.join(__dirname, 'main-inject.js'), '
 
 let mainWindow = null;
 let settingsWindow = null;
-let miniWindow = null;
 let welcomeWindow = null;
 let tray = null;
-let mainVisibility = 'visible';
-let appFocused = true;
-let blurResolveTimer = null;
 let inMeeting = false;
 // A meet:// deep link can arrive before the main window exists (cold start,
 // where the OS launches us with the URL) or after the app was relaunched.
@@ -142,9 +138,9 @@ function saveConfig(next) {
 let lastAppliedAOT = null;
 
 function applyWindowPrefs() {
-  // AOT and mini-mode only kick in *during* a meeting — the lobby/landing
-  // page doesn't need to stay on top or shrink to a corner. When the URL
-  // leaves the meeting code pattern, both behaviors automatically deactivate.
+  // Always-on-top only kicks in *during* a meeting — the lobby/landing page
+  // doesn't need to stay on top. When the URL leaves the meeting code
+  // pattern, the behavior automatically deactivates.
   const aotConfigured = !!(config.window && config.window.alwaysOnTop);
   const aot = aotConfigured && inMeeting;
 
@@ -158,8 +154,6 @@ function applyWindowPrefs() {
       settingsWindow.setAlwaysOnTop(aot, 'floating', 2);
     }
   }
-
-  evaluateMiniState();
 }
 
 function checkMeetingState() {
@@ -169,320 +163,6 @@ function checkMeetingState() {
     applyWindowPrefs();
   }
 }
-
-// ─── Mini window ────────────────────────────────────────────────────────────
-
-const MINI_MARGIN = 16;
-const MINI_FRAME_INTERVAL_MS = 250; // ~4 fps — capturePage isn't free
-const MINI_FRAME_WIDTH = 600;       // pre-resize before sending over IPC
-
-const MINI_SIZE_RATIOS = { small: 0.10, medium: 0.25, large: 0.40 };
-
-function miniSizePx() {
-  // Mini width is a percentage of the *display* (work area) — not the main
-  // window — so sizes are predictable regardless of how big the user has
-  // their MeetLoaf window. Height preserves main's aspect ratio so the
-  // preview content fits without distortion.
-  //   small  = display * 10%
-  //   medium = display * 25%
-  //   large  = display * 50%
-  const ratio = MINI_SIZE_RATIOS[config.window?.miniSize] ?? 0.25;
-  const main = mainWindow && !mainWindow.isDestroyed()
-    ? mainWindow.getBounds()
-    : { width: 1200, height: 800 };
-  const display = screen.getDisplayMatching(main);
-  const wa = display.workArea;
-  const aspect = main.width > 0 ? main.height / main.width : 0.667;
-  const width = Math.round(wa.width * ratio);
-  const height = Math.round(width * aspect);
-  return { width, height };
-}
-
-function miniBoundsFor(corner) {
-  // Use the display the main window currently lives on so the mini appears
-  // in the corner of the same screen.
-  const ref = mainWindow && !mainWindow.isDestroyed()
-    ? mainWindow.getBounds()
-    : { x: 0, y: 0, width: 0, height: 0 };
-  const display = screen.getDisplayMatching(ref);
-  const wa = display.workArea;
-  const { width, height } = miniSizePx();
-  const right = wa.x + wa.width - width - MINI_MARGIN;
-  const bottom = wa.y + wa.height - height - MINI_MARGIN;
-  const left = wa.x + MINI_MARGIN;
-  const top = wa.y + MINI_MARGIN;
-  switch (corner) {
-    case 'top-left':     return { x: left,  y: top,    width, height };
-    case 'top-right':    return { x: right, y: top,    width, height };
-    case 'bottom-left':  return { x: left,  y: bottom, width, height };
-    case 'bottom-right':
-    default:             return { x: right, y: bottom, width, height };
-  }
-}
-
-function ensureMiniWindow() {
-  if (miniWindow && !miniWindow.isDestroyed()) return miniWindow;
-
-  const corner = config.window?.miniCorner || 'bottom-right';
-  const bounds = miniBoundsFor(corner);
-
-  miniWindow = new BrowserWindow({
-    ...bounds,
-    // Regular BrowserWindow — no type:'panel', no skipTaskbar:true. Both
-    // of those flags translate to "transient/auxiliary" classifications on
-    // macOS that have been observed to demote the app to accessory mode
-    // when the mini is the only visible window.
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    show: false,
-    hasShadow: false,
-    alwaysOnTop: true,
-    acceptFirstMouse: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'mini', 'preload.js'),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false
-    }
-  });
-
-  miniWindow.setAlwaysOnTop(true, 'floating', 1);
-  miniWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  miniWindow.loadFile(path.join(__dirname, 'mini', 'index.html'));
-
-  miniWindow.on('closed', () => { miniWindow = null; });
-
-  return miniWindow;
-}
-
-// Last known mic/camera state, cached so we can include it in status pushes
-// even when the poll is between intervals.
-let lastMicMuted = null;
-let lastCameraOff = null;
-
-async function readMicCameraState() {
-  if (!mainWindow || mainWindow.isDestroyed()) return null;
-  // Read aria-labels of Meet's mic and camera toggle buttons. The label
-  // tells us the *action* the button will perform: "Turn on microphone"
-  // means mic is currently OFF (button will turn it on). Inverse for camera.
-  const js = `
-    (() => {
-      const els = document.querySelectorAll('[role="button"][aria-label], button[aria-label]');
-      let muted = null, cameraOff = null;
-      for (const el of els) {
-        const label = (el.getAttribute('aria-label') || '').toLowerCase();
-        if (muted === null && /turn (on|off) microphone/.test(label)) {
-          muted = /turn on microphone/.test(label);
-        }
-        if (cameraOff === null && /turn (on|off) camera/.test(label)) {
-          cameraOff = /turn on camera/.test(label);
-        }
-        if (muted !== null && cameraOff !== null) break;
-      }
-      return { muted, cameraOff };
-    })();
-  `;
-  try {
-    return await mainWindow.webContents.executeJavaScript(js);
-  } catch {
-    return null;
-  }
-}
-
-function pushMiniStatus() {
-  if (!miniWindow || miniWindow.isDestroyed()) return;
-  const inMeeting = isInActiveMeeting();
-  miniWindow.webContents.send('mini:status', {
-    text: inMeeting ? 'In a meeting' : 'Click to restore',
-    inMeeting,
-    muted: lastMicMuted,
-    cameraOff: lastCameraOff
-  });
-}
-
-function showMini() {
-  ensureMiniWindow();
-  // Reposition before show in case the corner setting changed or the user
-  // moved the main window to a different display.
-  const corner = config.window?.miniCorner || 'bottom-right';
-  miniWindow.setBounds(miniBoundsFor(corner));
-  miniWindow.showInactive(); // show without stealing focus
-  pushMiniStatus();
-  startFrameStream();
-  scheduleDockAssertion();
-}
-
-function hideMini() {
-  stopFrameStream();
-  if (miniWindow && !miniWindow.isDestroyed() && miniWindow.isVisible()) {
-    miniWindow.hide();
-  }
-}
-
-// ─── Live preview stream + mic/camera state poll ───────────────────────────
-
-let frameTimer = null;
-let capturing = false;
-let stateTimer = null;
-
-async function pollMicCamera() {
-  const next = await readMicCameraState();
-  if (!next) return;
-  const changed = next.muted !== lastMicMuted || next.cameraOff !== lastCameraOff;
-  lastMicMuted = next.muted;
-  lastCameraOff = next.cameraOff;
-  if (changed) pushMiniStatus();
-}
-
-async function captureAndSend() {
-  if (capturing) return;
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (!miniWindow || miniWindow.isDestroyed() || !miniWindow.isVisible()) return;
-  capturing = true;
-  try {
-    const image = await mainWindow.webContents.capturePage();
-    if (!miniWindow || miniWindow.isDestroyed() || !miniWindow.isVisible()) return;
-    if (image.isEmpty()) return;
-    const small = image.resize({ width: MINI_FRAME_WIDTH, quality: 'good' });
-    miniWindow.webContents.send('mini:frame', small.toDataURL());
-  } catch {
-    // capturePage rejects during teardown / before web contents are ready
-  } finally {
-    capturing = false;
-  }
-}
-
-function startFrameStream() {
-  if (frameTimer) return;
-  // Snapshot immediately so the preview isn't blank for a beat.
-  captureAndSend();
-  frameTimer = setInterval(captureAndSend, MINI_FRAME_INTERVAL_MS);
-  // Mic/camera state polls more slowly — toggling state ~1Hz is plenty.
-  pollMicCamera();
-  stateTimer = setInterval(pollMicCamera, 1000);
-}
-
-function stopFrameStream() {
-  if (frameTimer) {
-    clearInterval(frameTimer);
-    frameTimer = null;
-  }
-  if (stateTimer) {
-    clearInterval(stateTimer);
-    stateTimer = null;
-  }
-  // Reset cached state so the next session starts unknown rather than stale.
-  lastMicMuted = null;
-  lastCameraOff = null;
-  if (miniWindow && !miniWindow.isDestroyed()) {
-    miniWindow.webContents.send('mini:clear');
-  }
-}
-
-function evaluateMiniState() {
-  const enabled = !!(config.window && config.window.miniMode) && inMeeting;
-  if (!enabled || config.window?.alwaysOnTop) {
-    hideMini();
-    return;
-  }
-
-  const trigger = config.window?.miniTrigger || 'covered';
-  const shouldShow = trigger === 'unfocused'
-    ? !appFocused
-    : mainVisibility === 'hidden';
-
-  if (shouldShow) showMini();
-  else hideMini();
-}
-
-// No-op kept so existing call sites don't need editing. The mini is now a
-// child window of main (parent: mainWindow on the BrowserWindow opts), so
-// macOS sees the mini as part of main's window hierarchy. Main is regular,
-// so the app stays regular regardless of mini's panel-ness.
-function scheduleDockAssertion() {}
-
-// Debounced visibility handling. capturePage() (used by the mini preview)
-// causes Chromium to briefly flip document.visibilityState 'hidden' -> 'visible'
-// -> 'hidden' on each capture. Without debouncing, the mini window flickers
-// at the capture rate. We apply 'hidden' immediately (snappy mini-on) but
-// defer 'visible' to filter out the transient capture-induced blips.
-let visibilityVisibleTimer = null;
-
-ipcMain.on('main:visibility', (_e, state) => {
-  if (state === 'hidden') {
-    if (visibilityVisibleTimer) {
-      clearTimeout(visibilityVisibleTimer);
-      visibilityVisibleTimer = null;
-    }
-    if (mainVisibility !== 'hidden') {
-      mainVisibility = 'hidden';
-      evaluateMiniState();
-    }
-    return;
-  }
-  if (visibilityVisibleTimer) clearTimeout(visibilityVisibleTimer);
-  visibilityVisibleTimer = setTimeout(() => {
-    visibilityVisibleTimer = null;
-    if (mainVisibility !== 'visible') {
-      mainVisibility = 'visible';
-      evaluateMiniState();
-    }
-  }, 500);
-});
-
-// Track whether *any* MeetLoaf window has focus (main, settings, or mini).
-// Using app-level events rather than mainWindow.on('blur') so opening Settings
-// doesn't count as "unfocused", and clicking the mini doesn't either.
-app.on('browser-window-focus', (_e, win) => {
-  // Mini focusing (if it ever sneaks past focusable:false) doesn't count.
-  if (win === miniWindow) return;
-  if (blurResolveTimer) { clearTimeout(blurResolveTimer); blurResolveTimer = null; }
-  appFocused = true;
-  evaluateMiniState();
-});
-
-app.on('browser-window-blur', (_e, win) => {
-  if (win === miniWindow) return;
-  // Defer the decision a tick — focus may transfer to another MeetLoaf window
-  // (Settings, the mini itself), and we don't want to flicker the mini on
-  // intra-app focus changes.
-  if (blurResolveTimer) clearTimeout(blurResolveTimer);
-  blurResolveTimer = setTimeout(() => {
-    blurResolveTimer = null;
-    if (BrowserWindow.getFocusedWindow()) return; // some MeetLoaf window still focused
-    appFocused = false;
-    evaluateMiniState();
-  }, 80);
-});
-
-// Toggle main's mic/cam from the mini buttons. We briefly drop main's
-// focusable flag so even if macOS tries to activate MeetLoaf as a side
-// effect of the panel click, main can't become the key window and won't
-// jump to the foreground.
-function toggleViaMini(pattern) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    clickByAriaLabel(pattern);
-    return;
-  }
-  const wasFocusable = mainWindow.isFocusable();
-  mainWindow.setFocusable(false);
-  clickByAriaLabel(pattern);
-  // Restore focusable shortly after so it doesn't interfere with later
-  // restore actions. 200ms is enough for macOS to settle.
-  setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setFocusable(wasFocusable);
-    }
-  }, 200);
-}
-
-ipcMain.on('mini:toggle-mute', () => toggleViaMini('turn (on|off) microphone'));
-ipcMain.on('mini:toggle-camera', () => toggleViaMini('turn (on|off) camera'));
 
 // Triggered by the injected "MeetLoaf Settings" link in Meet's own modal.
 ipcMain.on('main:open-settings', () => openSettingsWindow());
@@ -603,43 +283,6 @@ ipcMain.handle('firefox:install-extension', async () => {
   });
 });
 
-ipcMain.on('mini:restore', () => {
-  // Optimistically mark visibility so the focus events that fire from show()
-  // / focus() below don't see mainVisibility==='hidden' and immediately
-  // re-trigger the mini. The renderer's real visibility event will arrive
-  // shortly and confirm.
-  mainVisibility = 'visible';
-  if (visibilityVisibleTimer) {
-    clearTimeout(visibilityVisibleTimer);
-    visibilityVisibleTimer = null;
-  }
-
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-
-    // Bring main to the user's current Space. Without this, if the user
-    // switched Spaces (which is one of the things that fires 'hidden'),
-    // show() lands the window on its original Space and the user sees
-    // nothing on their current Space.
-    const wasAOT = !!config.window?.alwaysOnTop;
-    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-
-    mainWindow.show();
-    mainWindow.focus();
-    app.focus({ steal: true });
-
-    // Restore the workspace setting unless always-on-top wants it sticky.
-    if (!wasAOT) {
-      setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.setVisibleOnAllWorkspaces(false);
-        }
-      }, 250);
-    }
-  }
-  hideMini();
-});
-
 function normalizeMeetUrl(raw) {
   const stripped = raw.replace(/^meet:\/\//, '').replace(/^\/+/, '');
   if (stripped.startsWith('http://') || stripped.startsWith('https://')) return stripped;
@@ -727,7 +370,7 @@ function createWindow() {
   pendingDeepLink = null;
 
   // Track whether the user is in a meeting (URL matches xxx-yyyy-zzz pattern).
-  // AOT and Mini-mode are gated on this so they only activate during calls,
+  // Always-on-top is gated on this so it only activates during calls,
   // not on the lobby. Both `did-navigate` (full page loads) and
   // `did-navigate-in-page` (Meet's SPA route changes) are needed.
   mainWindow.webContents.on('did-navigate', checkMeetingState);
@@ -779,10 +422,19 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Google auth popups stay in-app.
     if (url.startsWith('https://accounts.google.com')) {
       return { action: 'allow' };
     }
-    shell.openExternal(url);
+    // Windows Meet opens programmatically (e.g. Picture-in-Picture, transient
+    // popups) arrive with about:blank / blob: / data: URLs. Let them open
+    // in-app — handing these to shell.openExternal throws "No application
+    // found to open URL" (macOS has no handler for about:blank).
+    if (!/^https?:\/\//i.test(url)) {
+      return { action: 'allow' };
+    }
+    // Real external links go to the user's browser.
+    shell.openExternal(url).catch(() => {});
     return { action: 'deny' };
   });
 }
@@ -1266,7 +918,7 @@ if (!gotLock) {
   });
 
   // Local shortcuts are routed through each window's webContents. Attaching
-  // before any window is created ensures we catch all of them — main, mini,
+  // before any window is created ensures we catch all of them — main,
   // settings, welcome, and any auth popups Google opens.
   app.on('web-contents-created', (_e, wc) => attachLocalShortcuts(wc));
 
@@ -1274,16 +926,14 @@ if (!gotLock) {
     loadConfig();
 
     // setActivationPolicy alone doesn't surface the dock icon — dock.show()
-    // is what physically does it. Single call at startup. The mini being a
-    // child of main should keep macOS from demoting us afterwards, so no
-    // re-assertion needed during the session.
+    // is what physically does it. Single call at startup.
     if (process.platform === 'darwin') {
       app.setActivationPolicy('regular');
       if (app.dock && typeof app.dock.show === 'function') app.dock.show();
     }
 
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-      const allowed = ['media', 'mediaKeySystem', 'notifications', 'display-capture'];
+      const allowed = ['media', 'mediaKeySystem', 'notifications', 'display-capture', 'picture-in-picture'];
       callback(allowed.includes(permission));
     });
 
