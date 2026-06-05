@@ -66,6 +66,11 @@ let mainVisibility = 'visible';
 let appFocused = true;
 let blurResolveTimer = null;
 let inMeeting = false;
+// A meet:// deep link can arrive before the main window exists (cold start,
+// where the OS launches us with the URL) or after the app was relaunched.
+// We stash the resolved target here so createWindow() opens it as the initial
+// page instead of the Meet home page.
+let pendingDeepLink = null;
 let config = { shortcuts: {}, window: { width: 1200, height: 800 } };
 
 // Shortcuts used to be stored as bare accelerator strings; now each is
@@ -654,7 +659,17 @@ function isInActiveMeeting() {
 
 async function handleDeepLink(rawUrl) {
   const target = normalizeMeetUrl(rawUrl);
-  if (!mainWindow) return;
+
+  // No live window yet — cold start (the meet:// launch reaches us before
+  // whenReady builds the window) or a relaunch after quit. Stash the target
+  // and make sure a window gets built; createWindow() consumes pendingDeepLink
+  // as its initial page. Previously this returned early and the link was
+  // silently dropped, so the app opened on the Meet home page.
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    pendingDeepLink = target;
+    if (app.isReady()) createWindow();
+    return;
+  }
 
   if (isInActiveMeeting()) {
     const { response } = await dialog.showMessageBox(mainWindow, {
@@ -674,6 +689,19 @@ async function handleDeepLink(rawUrl) {
 }
 
 function createWindow() {
+  // Idempotent: if a window already exists (e.g. a deep link arrives while
+  // we're running), surface it and honor any pending deep link rather than
+  // spawning a second window.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (pendingDeepLink) {
+      mainWindow.loadURL(pendingDeepLink);
+      pendingDeepLink = null;
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
   mainWindow = new BrowserWindow({
     width: config.window?.width || 1200,
     height: config.window?.height || 800,
@@ -693,7 +721,10 @@ function createWindow() {
   });
 
   mainWindow.webContents.setUserAgent(USER_AGENT);
-  mainWindow.loadURL(MEET_URL);
+  // Open straight to a deep-linked meeting if one was queued before the
+  // window existed; otherwise the Meet home page.
+  mainWindow.loadURL(pendingDeepLink || MEET_URL);
+  pendingDeepLink = null;
 
   // Track whether the user is in a meeting (URL matches xxx-yyyy-zzz pattern).
   // AOT and Mini-mode are gated on this so they only activate during calls,
@@ -1226,8 +1257,12 @@ if (!gotLock) {
 
   app.on('open-url', (event, url) => {
     event.preventDefault();
+    // If we're already running, route it now. If the URL is what launched us
+    // (open-url fires before whenReady), just queue it: the startup path opens
+    // pendingDeepLink after loadConfig + createWindow. Calling handleDeepLink
+    // during the 'ready' emit would run before createWindow and get dropped.
     if (app.isReady()) handleDeepLink(url);
-    else app.once('ready', () => handleDeepLink(url));
+    else pendingDeepLink = normalizeMeetUrl(url);
   });
 
   // Local shortcuts are routed through each window's webContents. Attaching
@@ -1268,6 +1303,13 @@ if (!gotLock) {
       }
     }, { useSystemPicker: true });
 
+    // Windows/Linux deliver the deep link as a launch argument rather than
+    // via open-url, so capture it before createWindow() opens the window.
+    if (!pendingDeepLink) {
+      const argvDeepLink = process.argv.find((a) => a.startsWith('meet://'));
+      if (argvDeepLink) pendingDeepLink = normalizeMeetUrl(argvDeepLink);
+    }
+
     buildMenu();
     createWindow();
     applyWindowPrefs();
@@ -1280,9 +1322,6 @@ if (!gotLock) {
       // Small delay so main window is settled visually before the tour pops.
       setTimeout(openWelcomeWindow, 600);
     }
-
-    const deepLink = process.argv.find((a) => a.startsWith('meet://'));
-    if (deepLink) handleDeepLink(deepLink);
 
     setTimeout(() => checkForUpdates(), 5000);
   });
