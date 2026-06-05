@@ -75,13 +75,16 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
     "mute": "Cmd+Shift+M",
     "camera": "Cmd+Shift+V",
     "hand": "Cmd+Shift+H",
-    "toggleWindow": "Cmd+Shift+Backslash"
+    "toggleWindow": "Cmd+Shift+Backslash",
+    "leave": { "accelerator": "Cmd+W", "global": false }
   },
   "window": { "width": 1200, "height": 800 }
 }
 ```
 
-Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/latest/api/accelerator). Empty string = unbound. Restart the app after hand-editing.
+**Leave meeting** is bound to `⌘W` out of the box. It's local-only (not global) on purpose — a global `⌘W` would hijack window-close everywhere, so it only hangs up while MeetLoaf is focused. Clear or rebind it in Settings like any other shortcut.
+
+Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/latest/api/accelerator). Each shortcut is `{ "accelerator": "…", "global": true|false }`; a bare string is treated as a global binding. Empty string = unbound. Restart the app after hand-editing.
 
 > **Note on Picture-in-Picture:** Meet's own *More options → Picture-in-picture* doesn't work inside MeetLoaf. It relies on the Document Picture-in-Picture API, which Electron doesn't render ([electron#39633](https://github.com/electron/electron/issues/39633)). The older per-video `requestPictureInPicture` API is wired up in Electron and renders for an ordinary video, but on Meet's remote WebRTC tiles it surfaces no window and the request never completes (the meeting keeps working — it doesn't crash). Both were tested and ruled out — MeetLoaf has no PiP. Use always-on-top (Settings → Window) to keep the call visible instead.
 

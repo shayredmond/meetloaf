@@ -69,12 +69,30 @@ let inMeeting = false;
 let pendingDeepLink = null;
 let config = { shortcuts: {}, window: { width: 1200, height: 800 } };
 
+// Built-in shortcut defaults. Seeded into every loaded config so that keys
+// absent from an existing config.json (e.g. after an upgrade) still get their
+// intended binding. `leave` defaults to Cmd+W and is intentionally NOT global:
+// a global Cmd+W would hijack window-close in every app. Local-only means it
+// only leaves the meeting while MeetLoaf is focused — matching the muscle
+// memory of "Cmd+W closes the thing in front of me".
+const DEFAULT_SHORTCUTS = {
+  mute: { accelerator: '', global: true },
+  camera: { accelerator: '', global: true },
+  hand: { accelerator: '', global: true },
+  toggleWindow: { accelerator: '', global: true },
+  leave: { accelerator: 'Cmd+W', global: false }
+};
+
 // Shortcuts used to be stored as bare accelerator strings; now each is
 // { accelerator, global } so users can opt out of OS-global registration
 // per shortcut. Older configs are upgraded transparently — pre-existing
-// shortcuts default to global:true, which is the previous behavior.
+// shortcuts default to global:true, which is the previous behavior. Missing
+// keys fall back to DEFAULT_SHORTCUTS so new bindings appear on upgrade.
 function normalizeShortcuts(raw) {
   const out = {};
+  for (const [key, value] of Object.entries(DEFAULT_SHORTCUTS)) {
+    out[key] = { ...value };
+  }
   for (const [key, value] of Object.entries(raw || {})) {
     if (value && typeof value === 'object') {
       out[key] = {
@@ -889,6 +907,7 @@ function registerShortcuts() {
   bind(s.camera, () => clickByAriaLabel('turn (on|off) camera'));
   bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
   bind(s.toggleWindow, () => toggleMainWindow());
+  bind(s.leave, () => clickByAriaLabel('leave call'));
 }
 
 const gotLock = app.requestSingleInstanceLock();
