@@ -316,10 +316,6 @@ html, body {
   margin-top: 2px;
 }
 
-/* Sub-rows are hidden entirely unless mini mode is selected */
-.sub-row[data-disabled="true"],
-.corner-row[data-disabled="true"] { display: none; }
-
 /* macOS-style segmented control */
 .segmented {
   display: inline-flex;
@@ -387,53 +383,6 @@ html, body {
 
 .segment.selected:hover {
   background: var(--accent) !important;
-}
-
-.corner-picker {
-  display: grid;
-  grid-template-columns: repeat(2, 32px);
-  grid-template-rows: repeat(2, 24px);
-  gap: 4px;
-  -webkit-app-region: no-drag;
-}
-
-.corner {
-  position: relative;
-  width: 32px;
-  height: 24px;
-  background: var(--capture-bg);
-  border: 1px solid var(--capture-border);
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 0;
-  transition: border-color 0.12s, background 0.12s;
-}
-
-.corner:hover {
-  border-color: var(--accent);
-}
-
-.corner .dot {
-  position: absolute;
-  width: 7px;
-  height: 5px;
-  background: var(--fg-dim);
-  border-radius: 1.5px;
-  transition: background 0.12s;
-}
-
-.corner[data-corner="top-left"] .dot     { top: 3px; left: 3px; }
-.corner[data-corner="top-right"] .dot    { top: 3px; right: 3px; }
-.corner[data-corner="bottom-left"] .dot  { bottom: 3px; left: 3px; }
-.corner[data-corner="bottom-right"] .dot { bottom: 3px; right: 3px; }
-
-.corner.selected {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.corner.selected .dot {
-  background: white;
 }
 
 /* Chrome install instructions — numbered list inside the routing tab */

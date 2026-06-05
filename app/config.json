@@ -9,10 +9,6 @@
   "window": {
     "width": 1200,
     "height": 800,
-    "alwaysOnTop": false,
-    "miniMode": false,
-    "miniTrigger": "covered",
-    "miniCorner": "bottom-right",
-    "miniSize": "medium"
+    "alwaysOnTop": false
   }
 }
