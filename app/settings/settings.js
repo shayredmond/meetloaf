@@ -210,6 +210,9 @@ function setupTabs() {
   navItems.forEach((item) => {
     item.addEventListener('click', (e) => {
       e.stopPropagation();
+      // Leaving a half-recorded shortcut armed would swallow keystrokes in
+      // whichever panel the user lands on.
+      if (activeRow) stopRecording(activeRow, { restore: true });
       const target = item.dataset.target;
       navItems.forEach((n) => {
         const isActive = n === item;
@@ -359,6 +362,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  setupHomeAssistant();
+
   // About section: re-run welcome tour
   const showWelcomeBtn = document.getElementById('showWelcomeBtn');
   if (showWelcomeBtn) {
@@ -400,6 +405,172 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
 });
+
+// ─── Home Assistant panel ──────────────────────────────────────────────────
+
+const HA_DEFAULTS = {
+  enabled: false,
+  mode: 'webhook',
+  joinOn: 'lobby',
+  baseUrl: '',
+  token: '',
+  join: '',
+  leave: ''
+};
+
+const HA_JOINON_COPY = {
+  lobby: 'As soon as the pre-join screen opens, so camera and lights are already set up while you pick your devices.',
+  connected: 'Only once you are actually admitted and connected to the call.'
+};
+
+const HA_COPY = {
+  webhook: {
+    mode: 'POSTs JSON to a Home Assistant webhook. No access token needed.',
+    target: 'Webhook ID, or a full webhook URL.',
+    joinPlaceholder: 'meetloaf-joined',
+    leavePlaceholder: 'meetloaf-left'
+  },
+  service: {
+    mode: 'Calls the Home Assistant REST API. Needs a long-lived access token.',
+    target: 'Entity ID to act on.',
+    joinPlaceholder: 'automation.meeting_started',
+    leavePlaceholder: 'automation.meeting_ended'
+  }
+};
+
+function setupHomeAssistant() {
+  const el = {
+    enabled: document.getElementById('haEnabled'),
+    modeHelp: document.getElementById('haModeHelp'),
+    joinOnHelp: document.getElementById('haJoinOnHelp'),
+    baseUrlRow: document.getElementById('haBaseUrlRow'),
+    baseUrl: document.getElementById('haBaseUrl'),
+    tokenRow: document.getElementById('haTokenRow'),
+    token: document.getElementById('haToken'),
+    join: document.getElementById('haJoin'),
+    joinHelp: document.getElementById('haJoinHelp'),
+    leave: document.getElementById('haLeave'),
+    leaveHelp: document.getElementById('haLeaveHelp'),
+    webhookHelp: document.getElementById('haWebhookHelp'),
+    serviceHelp: document.getElementById('haServiceHelp')
+  };
+  if (!el.enabled) return;
+
+  // Select on the data attributes, not a shared class: two segmented controls
+  // in one panel meant a class-based selector matched both, and the second
+  // paint pass stripped the first control's `selected`.
+  const modeButtons = document.querySelectorAll('[data-ha-mode]');
+  const joinOnButtons = document.querySelectorAll('[data-ha-joinon]');
+  const ha = { ...HA_DEFAULTS, ...(state.raw.homeAssistant || {}) };
+  if (ha.mode !== 'service') ha.mode = 'webhook';
+  if (ha.joinOn !== 'connected') ha.joinOn = 'lobby';
+
+  // Typing shouldn't write config.json on every keystroke; coalesce into one
+  // save shortly after the user stops (and flush immediately on blur).
+  let saveTimer = null;
+  function commit({ immediate = false } = {}) {
+    state.raw.homeAssistant = { ...ha };
+    if (saveTimer) clearTimeout(saveTimer);
+    if (immediate) {
+      persistRaw();
+      return;
+    }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persistRaw();
+    }, 600);
+  }
+
+  function paint() {
+    const copy = HA_COPY[ha.mode];
+    el.enabled.classList.toggle('checked', ha.enabled);
+    modeButtons.forEach((b) => b.classList.toggle('selected', b.dataset.haMode === ha.mode));
+    joinOnButtons.forEach((b) => b.classList.toggle('selected', b.dataset.haJoinon === ha.joinOn));
+    el.joinOnHelp.textContent = HA_JOINON_COPY[ha.joinOn];
+    el.modeHelp.textContent = copy.mode;
+    el.joinHelp.textContent = copy.target;
+    el.leaveHelp.textContent = copy.target;
+    el.join.placeholder = copy.joinPlaceholder;
+    el.leave.placeholder = copy.leavePlaceholder;
+
+    // A token is meaningless for webhooks, so the field goes away entirely
+    // rather than sitting there inviting people to paste a credential.
+    el.tokenRow.hidden = ha.mode !== 'service';
+    el.webhookHelp.hidden = ha.mode !== 'webhook';
+    el.serviceHelp.hidden = ha.mode !== 'service';
+
+    // Full webhook URLs carry their own host, so the base URL stops mattering.
+    const isFullUrl = (v) => /^https?:\/\//i.test(v);
+    const baseUnused = ha.mode === 'webhook' &&
+      (ha.join || ha.leave) &&
+      (!ha.join || isFullUrl(ha.join)) &&
+      (!ha.leave || isFullUrl(ha.leave));
+    el.baseUrlRow.dataset.inactive = baseUnused ? 'true' : 'false';
+  }
+
+  el.baseUrl.value = ha.baseUrl;
+  el.token.value = ha.token;
+  el.join.value = ha.join;
+  el.leave.value = ha.leave;
+  paint();
+
+  el.enabled.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ha.enabled = !ha.enabled;
+    paint();
+    commit({ immediate: true });
+  });
+
+  modeButtons.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      ha.mode = btn.dataset.haMode === 'service' ? 'service' : 'webhook';
+      paint();
+      commit({ immediate: true });
+    });
+  });
+
+  joinOnButtons.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      ha.joinOn = btn.dataset.haJoinon === 'connected' ? 'connected' : 'lobby';
+      paint();
+      commit({ immediate: true });
+    });
+  });
+
+  [['baseUrl', el.baseUrl], ['token', el.token], ['join', el.join], ['leave', el.leave]]
+    .forEach(([key, input]) => {
+      input.addEventListener('input', () => {
+        ha[key] = input.value.trim();
+        paint();
+        commit();
+      });
+      input.addEventListener('blur', () => commit({ immediate: true }));
+      // Deliberately NOT stopping propagation: the click has to reach the
+      // document handler that cancels an in-progress shortcut recording,
+      // otherwise the capture-phase keydown listener eats what you type here
+      // and binds it as a hotkey.
+    });
+
+  document.querySelectorAll('[data-ha-test]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const which = btn.dataset.haTest;
+      // Test against what's on screen, not what was last written to disk.
+      commit({ immediate: true });
+      btn.disabled = true;
+      setStatus(`Sending test ${which}\u2026`);
+      try {
+        const result = await window.meetloaf.testHomeAssistant(which);
+        if (result?.ok) setStatus(`Test ${which} sent (HTTP ${result.status})`);
+        else setStatus(result?.error || `Test ${which} failed`, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
 
 window.addEventListener('blur', () => {
   if (activeRow) stopRecording(activeRow, { restore: true });
