@@ -106,12 +106,85 @@
     log('injected entry into', tablist);
   }
 
+  // ─── Call-phase watcher (drives the Home Assistant join/leave events) ────
+  //
+  // Three phases matter, and the URL can't distinguish them — the
+  // xxx-yyyy-zzz code is in the address bar for all of them:
+  //
+  //   lobby      the pre-join / "green room" screen, where you pick your
+  //              camera and mic. This is where a preparation automation needs
+  //              to have already run, so it's a first-class phase, not a
+  //              waiting state.
+  //   in_call    admitted and connected; Meet renders "Leave call".
+  //   post_call  the "You left the meeting" / "Rejoin" screen. Critically
+  //              this is NOT a lobby: treating it as one would leave a camera
+  //              or on-air light switched on indefinitely after you hang up.
+  //
+  // Anything unrecognised reports `unknown`, which main treats as "not
+  // present". Failing that direction is deliberate: if Meet renames a label,
+  // the worst case is an automation that doesn't fire, never a device left on.
+  //
+  // We match Meet's own control labels for the same reason the settings
+  // injection does — the obfuscated CSS classes rotate, these don't. Unlike
+  // "Leave call", the pre-join button carries its label as text rather than an
+  // aria-label, so both are checked.
+  //
+  // This side only *observes*. Debouncing lives in the main process, because
+  // MeetLoaf hides its window instead of closing it: a hidden renderer gets
+  // its rAF suspended and its timers throttled, so neither the observer below
+  // nor a setTimeout here can be relied on while the window is tucked away.
+  // Main polls __meetloafCallPhase() on an unthrottled timer to cover that.
+  const IN_CALL_RE = /leave call/i;
+  const LOBBY_RE = /^(join now|ask to join|switch here|join anyway)$/i;
+  const POST_CALL_RE = /^(rejoin|return to home ?screen|back to home ?screen)$/i;
+
+  function controlLabels() {
+    const labels = [];
+    for (const el of document.querySelectorAll('[role="button"], button')) {
+      const aria = el.getAttribute('aria-label');
+      if (aria) labels.push(aria.trim());
+      // Cap the length: an outer wrapper button can contain a whole subtree,
+      // whose concatenated text would match almost anything.
+      const text = (el.textContent || '').trim();
+      if (text && text.length <= 40) labels.push(text);
+    }
+    return labels;
+  }
+
+  function callPhase() {
+    const labels = controlLabels();
+    // Order matters: in_call wins outright, and post_call is checked before
+    // lobby so a "Rejoin" screen can never be mistaken for a pre-join screen.
+    if (labels.some((l) => IN_CALL_RE.test(l))) return 'in_call';
+    if (labels.some((l) => POST_CALL_RE.test(l))) return 'post_call';
+    if (labels.some((l) => LOBBY_RE.test(l))) return 'lobby';
+    return 'unknown';
+  }
+
+  // Read directly by the main process via executeJavaScript, which runs
+  // regardless of how throttled the renderer's own timers are.
+  window.__meetloafCallPhase = callPhase;
+
+  let lastPosted = null;
+
+  function reportCallPhase() {
+    const observed = callPhase();
+    if (observed === lastPosted) return;
+    lastPosted = observed;
+    log('phase:', observed);
+    window.postMessage(
+      { source: 'meetloaf-injected', type: 'meeting-phase', phase: observed },
+      '*'
+    );
+  }
+
   let raf = null;
   function schedule() {
     if (raf) return;
     raf = requestAnimationFrame(() => {
       raf = null;
       try { inject(); } catch (err) { log('inject error', err); }
+      try { reportCallPhase(); } catch (err) { log('call-phase error', err); }
     });
   }
   new MutationObserver(schedule).observe(document.documentElement, {
@@ -119,5 +192,5 @@
     subtree: true
   });
   schedule();
-  log('content script ready, watching for settings tablist');
+  log('content script ready, watching for settings tablist + call phase');
 })();
