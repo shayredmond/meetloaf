@@ -14,5 +14,6 @@ contextBridge.exposeInMainWorld('meetloaf', {
   installFirefoxExtension: () => ipcRenderer.invoke('firefox:install-extension'),
   detectChrome: () => ipcRenderer.invoke('chrome:detect'),
   showChromeFolder: () => ipcRenderer.invoke('chrome:show-folder'),
-  openChromeExtensions: () => ipcRenderer.invoke('chrome:open-extensions')
+  openChromeExtensions: () => ipcRenderer.invoke('chrome:open-extensions'),
+  testHomeAssistant: (which) => ipcRenderer.invoke('ha:test', which)
 });

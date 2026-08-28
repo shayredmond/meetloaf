@@ -221,6 +221,97 @@ Now a meet link clicked from anywhere (Slack, Mail, Fantastical, Terminal, ...) 
 
 If you're already in a meeting when a new `meet://` link arrives, MeetLoaf prompts you before switching.
 
+## 4. Home Assistant (meeting automations)
+
+MeetLoaf can fire a Home Assistant automation the moment you **join** a meeting, and another when you **leave** — "on air" sign, desk lamp, do-not-disturb, whatever you've got.
+
+Configure it in **Settings → Home Assistant**.
+
+### What counts as "joined"
+
+By default, **reaching the waiting room** — the pre-join screen where you pick your camera and mic. That's deliberate: these automations are usually *preparation* (camera on, lights up, mic switched over), so they have to have run by the time you're configuring devices, not after.
+
+The meeting code alone can't tell these apart — it's in the URL for every screen — so MeetLoaf reads Meet's own controls and distinguishes three phases:
+
+| Phase       | Detected by                              | Counts as "in a meeting"?     |
+|-------------|------------------------------------------|-------------------------------|
+| `lobby`     | a *Join now* / *Ask to join* button       | yes (default), no in Connected mode |
+| `in_call`   | the *Leave call* control                  | yes                           |
+| `post_call` | a *Rejoin* / *Return to home screen* button | **no**                      |
+
+That third row is the one that matters most: after you hang up, Meet leaves you on a "You left the meeting" screen **still at the meeting URL**. It's counted as *not* in a meeting, so your leave automation runs and nothing is left switched on.
+
+Anything MeetLoaf doesn't recognise counts as *not* in a meeting. That direction is chosen on purpose — if Meet renames a label, the worst case is an automation that doesn't fire, never a camera or light left on indefinitely.
+
+**Fire "join" when** in Settings switches between `Waiting room` (default) and `Connected`. Pick `Connected` for something that shouldn't announce you early, like an on-air sign.
+
+Leave also fires on navigating away from the meeting, on a renderer crash, and on quitting MeetLoaf mid-call. A phase change has to hold briefly before it commits (400ms entering, 2s leaving) so Meet's DOM churn during a reconnect can't run your automations twice.
+
+Note that always-on-top (Settings → Window) is unaffected by this setting — it still engages only once you're actually connected, never in the waiting room.
+
+### Webhook mode (default, recommended)
+
+No credentials. In Home Assistant, create an automation with a **Webhook** trigger, then paste its webhook ID into MeetLoaf.
+
+```yaml
+# Home Assistant automation
+alias: Meeting started
+triggers:
+  - trigger: webhook
+    webhook_id: meetloaf-joined
+    local_only: true          # drop this if you're going via Nabu Casa
+actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.on_air_sign
+```
+
+MeetLoaf `POST`s JSON, so the automation can see the details:
+
+```json
+{
+  "event": "join",
+  "app": "meetloaf",
+  "version": "0.1.5",
+  "meeting_code": "abc-defg-hij",
+  "url": "https://meet.google.com/abc-defg-hij",
+  "timestamp": "2026-08-23T10:04:11.482Z",
+  "phase": "lobby",
+  "reason": "dom"
+}
+```
+
+Reachable as `{{ trigger.json.event }}`, `{{ trigger.json.meeting_code }}`, and so on — which means one webhook can serve both events if you'd rather branch inside HA than use two automations.
+
+`phase` is the phase that triggered it — `lobby`, `in_call`, `post_call` or `away` — so one automation can do less at the waiting room and more once you're actually connected.
+
+`reason` says what detected the transition: `dom` (a control appeared/disappeared), `navigation` (left the meeting URL), `poll` (main's backstop timer), `quit` (you quit MeetLoaf mid-call), `renderer-gone` (the Meet page crashed). Useful if you want "turn the lamp off, but only if I actually hung up".
+
+Paste either a bare webhook ID (combined with **Base URL**) or a full webhook URL — handy for a [Nabu Casa cloud webhook](https://www.nabucasa.com/config/webhooks/), which gives you a public URL with no port forwarding.
+
+### Service-call mode
+
+If you'd rather trigger an entity you already have, switch to **Service call**, supply a base URL and a [long-lived access token](https://www.home-assistant.io/docs/authentication/#your-account-profile), and give an entity ID. The service is derived from the domain:
+
+| Entity domain                                   | On join    | On leave    |
+|-------------------------------------------------|------------|-------------|
+| `automation`                                    | `trigger`  | `trigger`   |
+| `script`, `scene`                               | `turn_on`  | `turn_on`   |
+| `input_boolean`, `switch`, `light`, `fan`, `siren` | `turn_on`  | `turn_off`  |
+
+That last row means a single `input_boolean.in_a_meeting` helper mirrors your call state, which is usually nicer to build automations against than two one-shot triggers.
+
+> **Why webhook is the default:** `config.json` lives in `~/.config/meetloaf/` precisely so your dotfiles manager can track it. A long-lived access token in that file grants full API access to your whole Home Assistant instance — a webhook ID only triggers the one automation, and you can revoke it by deleting the trigger. Service-call mode is there when you want it; just know what you're committing.
+
+### Notes
+
+- The **Test** buttons in Settings send a real request (with `"test": true` in the payload) and report the HTTP status or the exact error, so you can verify before your next meeting.
+- Requests time out after 5s and retry once on a 5xx or a network error. `4xx` isn't retried — it means the ID or token is wrong.
+- Failures are logged, never shown as a dialog. A smart-home hook going quiet must not interrupt a call. Check `Console.app` (or run from a terminal) for `[meetloaf] Home Assistant … failed` lines.
+- Requests go out from the app's main process via Node, which uses its own CA store — a Home Assistant behind a **self-signed** certificate will be rejected. Use plain `http://` on your LAN, or a real certificate.
+
+---
+
 ## Troubleshooting
 
 - **"MeetLoaf is damaged and can't be opened"** on first launch: run `xattr -dr com.apple.quarantine /Applications/MeetLoaf.app`. See the install snippet at the top.
@@ -229,4 +320,7 @@ If you're already in a meeting when a new `meet://` link arrives, MeetLoaf promp
 - **Firefox extension doesn't redirect:** confirm it's enabled (toolbar icon has no "off" badge); confirm `about:config` → `network.protocol-handler.external.meet` is `true`.
 - **Firefox "Launch Application" dialog every link:** tick "Remember my choice" the first time.
 - **Velja doesn't see MeetLoaf:** MeetLoaf has to be in `/Applications` and launched at least once for Velja to find it.
+- **Home Assistant automation never fires:** hit **Test** in Settings → Home Assistant — it reports the real HTTP status. `404` on a webhook means the ID is wrong or the automation was deleted; `401`/`403` in service-call mode means the token is bad. Also check the integration is actually **Enabled**.
+- **Home Assistant doesn't fire at the waiting room:** check **Fire "join" when** is set to `Waiting room`. If it still doesn't, Meet has probably renamed the pre-join button — open DevTools (View → Toggle Developer Tools) and look for `[meetloaf] phase:` lines. `unknown` where you expected `lobby` means the label changed; the patterns are at the top of the call-phase watcher in `app/main-inject.js`.
+- **Something stays switched on after I hang up:** MeetLoaf should read Meet's post-hangup screen as `post_call` and fire leave. Check DevTools for `[meetloaf] phase: post_call`; if it says `unknown`, the *Rejoin* / *Return to home screen* labels changed.
 - **Update checker never prompts:** confirm `repository.url` in `app/package.json` points to a real GitHub repo (not `OWNER/REPO`).
