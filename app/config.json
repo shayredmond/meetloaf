@@ -1,15 +1,39 @@
 {
   "welcomeSeen": false,
   "shortcuts": {
-    "mute": { "accelerator": "", "global": true },
-    "camera": { "accelerator": "", "global": true },
-    "hand": { "accelerator": "", "global": true },
-    "toggleWindow": { "accelerator": "", "global": true },
-    "leave": { "accelerator": "Cmd+W", "global": false }
+    "mute": {
+      "accelerator": "",
+      "global": true
+    },
+    "camera": {
+      "accelerator": "",
+      "global": true
+    },
+    "hand": {
+      "accelerator": "",
+      "global": true
+    },
+    "toggleWindow": {
+      "accelerator": "",
+      "global": true
+    },
+    "leave": {
+      "accelerator": "Cmd+W",
+      "global": false
+    }
   },
   "window": {
     "width": 1200,
     "height": 800,
     "alwaysOnTop": false
+  },
+  "homeAssistant": {
+    "enabled": false,
+    "mode": "webhook",
+    "joinOn": "lobby",
+    "baseUrl": "",
+    "token": "",
+    "join": "",
+    "leave": ""
   }
 }

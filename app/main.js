@@ -67,7 +67,7 @@ let inMeeting = false;
 // We stash the resolved target here so createWindow() opens it as the initial
 // page instead of the Meet home page.
 let pendingDeepLink = null;
-let config = { shortcuts: {}, window: { width: 1200, height: 800 } };
+let config = { shortcuts: {}, window: { width: 1200, height: 800 }, homeAssistant: {} };
 
 // Built-in shortcut defaults. Seeded into every loaded config so that keys
 // absent from an existing config.json (e.g. after an upgrade) still get their
@@ -106,6 +106,44 @@ function normalizeShortcuts(raw) {
   return out;
 }
 
+// Home Assistant integration defaults. Disabled until the user fills in a
+// target, so an upgraded config never starts firing requests on its own.
+//
+// `mode: 'webhook'` is the default because it needs no credential: the
+// webhook ID is the whole secret, it only grants "trigger this one
+// automation", and it's revocable from HA. That matters here because
+// config.json is deliberately stored under ~/.config/meetloaf so dotfile
+// managers can track it — a long-lived access token in a file people commit
+// is a much worse trade. `mode: 'service'` exists for people who'd rather
+// call automation.trigger on an existing entity; it needs the token.
+const HA_DEFAULTS = {
+  enabled: false,
+  mode: 'webhook',
+  // 'lobby'     fire "join" as soon as the pre-join screen appears. Default,
+  //             because these automations are preparation — camera, lights,
+  //             mic — and they have to have run before you configure devices.
+  // 'connected' fire only once actually admitted and connected.
+  joinOn: 'lobby',
+  baseUrl: '',
+  token: '',
+  join: '',
+  leave: ''
+};
+
+function normalizeHomeAssistant(raw) {
+  const out = { ...HA_DEFAULTS };
+  const src = raw && typeof raw === 'object' ? raw : {};
+  for (const key of ['baseUrl', 'token', 'join', 'leave']) {
+    if (typeof src[key] === 'string') out[key] = src[key].trim();
+  }
+  out.mode = src.mode === 'service' ? 'service' : 'webhook';
+  out.joinOn = src.joinOn === 'connected' ? 'connected' : 'lobby';
+  out.enabled = src.enabled === true;
+  // Trailing slashes would produce //api/webhook/... which HA rejects.
+  out.baseUrl = out.baseUrl.replace(/\/+$/, '');
+  return out;
+}
+
 function loadConfig() {
   try {
     // If a custom path was set but the file's gone (deleted folder, etc.),
@@ -131,7 +169,12 @@ function loadConfig() {
       fs.copyFileSync(BUNDLED_CONFIG, USER_CONFIG);
     }
     const parsed = JSON.parse(fs.readFileSync(USER_CONFIG, 'utf8'));
-    config = { ...config, ...parsed, shortcuts: normalizeShortcuts(parsed.shortcuts) };
+    config = {
+      ...config,
+      ...parsed,
+      shortcuts: normalizeShortcuts(parsed.shortcuts),
+      homeAssistant: normalizeHomeAssistant(parsed.homeAssistant)
+    };
   } catch (err) {
     console.error('Config load failed, using defaults:', err.message);
   }
@@ -141,7 +184,12 @@ function saveConfig(next) {
   try {
     fs.mkdirSync(path.dirname(USER_CONFIG), { recursive: true });
     fs.writeFileSync(USER_CONFIG, JSON.stringify(next, null, 2) + '\n', 'utf8');
-    config = { ...config, ...next, shortcuts: normalizeShortcuts(next.shortcuts) };
+    config = {
+      ...config,
+      ...next,
+      shortcuts: normalizeShortcuts(next.shortcuts),
+      homeAssistant: normalizeHomeAssistant(next.homeAssistant)
+    };
     applyWindowPrefs();
     return { ok: true };
   } catch (err) {
@@ -174,13 +222,313 @@ function applyWindowPrefs() {
   }
 }
 
-function checkMeetingState() {
-  const next = isInActiveMeeting();
-  if (next !== inMeeting) {
-    inMeeting = next;
-    applyWindowPrefs();
+// Confirmation windows for a phase change. Moving *towards* being present
+// should feel instant — the whole point of firing at the lobby is that the
+// automation has already run by the time you're setting up camera and mic.
+// Moving away gets a longer settle window because Meet's DOM churns hard during
+// reconnects and layout changes, and a spurious leave/join pair would run the
+// user's automations twice.
+const ENTER_CONFIRM_MS = 400;
+const EXIT_CONFIRM_MS = 2000;
+// How often main re-reads the phase itself. This is the safety net for a hidden
+// window, where the renderer's observer and timers are throttled.
+const PHASE_POLL_MS = 2000;
+
+// Ordering, not just identity: a change that moves up this scale is confirmed
+// fast, a change that moves down is confirmed slowly. `away` is our own phase
+// for "the URL isn't a meeting at all".
+const PHASE_RANK = { away: 0, unknown: 0, post_call: 0, lobby: 1, in_call: 2 };
+
+let phase = 'away';          // confirmed phase
+let phaseObserved = 'away';  // latest raw observation
+let phaseTimer = null;
+let phasePollTimer = null;
+// Whether the Home Assistant side currently considers us "in a meeting". Kept
+// separate from `inMeeting` (which means *connected*, and drives always-on-top)
+// so that choosing to fire automations at the lobby can't quietly change window
+// behaviour as a side effect.
+let haPresent = false;
+
+function clearPhaseConfirm() {
+  if (phaseTimer) {
+    clearTimeout(phaseTimer);
+    phaseTimer = null;
   }
 }
+
+// The URL is authoritative for "not in a meeting at all" — the home page, the
+// landing page, an auth redirect. Within a meeting URL, the DOM decides.
+function effectivePhase(raw) {
+  if (!isInActiveMeeting()) return 'away';
+  return PHASE_RANK[raw] === undefined ? 'unknown' : raw;
+}
+
+// Does this phase count as "in a meeting" for the Home Assistant events?
+function phaseIsPresent(p) {
+  if (p === 'in_call') return true;
+  // The waiting room counts unless the user asked for connected-only. It's the
+  // default: automations here are preparation (camera, lights, mic), and they
+  // need to have run before you start configuring devices.
+  if (p === 'lobby') return haConfig().joinOn !== 'connected';
+  return false;
+}
+
+// Every raw observation — from the DOM watcher or from our own poll — lands
+// here. A change only commits once it has held for its confirmation window, so
+// a momentary DOM blip cancels itself instead of firing automations.
+function observePhase(raw, source) {
+  const next = effectivePhase(raw);
+  phaseObserved = next;
+  if (next === phase) {
+    clearPhaseConfirm();
+    return;
+  }
+  if (phaseTimer) return; // a change is already pending; the latest raw wins
+  const entering = PHASE_RANK[next] > PHASE_RANK[phase];
+  phaseTimer = setTimeout(() => {
+    phaseTimer = null;
+    if (phaseObserved !== phase) commitPhase(phaseObserved, source);
+  }, entering ? ENTER_CONFIRM_MS : EXIT_CONFIRM_MS);
+}
+
+// Single funnel for every phase transition. Everything that can change the
+// state (DOM watcher, poll, navigation, renderer crash, quit) routes through
+// here, so the Home Assistant events fire exactly once per real transition.
+function commitPhase(next, reason) {
+  clearPhaseConfirm();
+  phase = next;
+  phaseObserved = next;
+
+  // Always-on-top tracks being *connected* — the lobby doesn't need to float,
+  // regardless of when the user wants automations to fire.
+  const connected = next === 'in_call';
+  if (connected !== inMeeting) {
+    inMeeting = connected;
+    applyWindowPrefs();
+  }
+
+  const present = phaseIsPresent(next);
+  if (present !== haPresent) {
+    haPresent = present;
+    console.log(`[meetloaf] meeting ${present ? 'joined' : 'left'} (${next}, ${reason})`);
+    fireHomeAssistant(present ? 'join' : 'leave', { reason, phase: next });
+  }
+}
+
+async function pollPhase() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // Cheap negative check first — no need to touch the renderer on the home
+  // page, and this is also what catches "navigated away while hidden".
+  if (!isInActiveMeeting()) {
+    observePhase('away', 'poll');
+    return;
+  }
+  try {
+    const raw = await mainWindow.webContents.executeJavaScript(
+      'typeof window.__meetloafCallPhase === "function" ? window.__meetloafCallPhase() : null'
+    );
+    if (typeof raw === 'string') observePhase(raw, 'poll');
+  } catch {
+    // Page mid-navigation or renderer gone — the next tick will catch up.
+  }
+}
+
+// Leaving the meeting URL ends things immediately rather than on a confirmation
+// window: there's no ambiguity to settle, and a device left on is the failure
+// we most want to avoid.
+function checkMeetingState() {
+  if (!isInActiveMeeting()) {
+    if (phase !== 'away') commitPhase('away', 'navigation');
+    return;
+  }
+  // Arriving at a meeting URL: re-evaluate with whatever the DOM last said.
+  // On an in-page navigation the phase string may not change at all, so the
+  // renderer's own change-detection wouldn't report anything.
+  observePhase(phaseObserved, 'navigation');
+}
+
+function startPhasePoll() {
+  if (phasePollTimer) clearInterval(phasePollTimer);
+  phasePollTimer = setInterval(() => { pollPhase(); }, PHASE_POLL_MS);
+}
+
+// ─── Home Assistant integration ────────────────────────────────────────────
+
+// Requests are fire-and-forget from the caller's perspective, but we keep the
+// promise around so the quit path can wait for an in-flight "leave" instead of
+// killing the process mid-request.
+let haPending = Promise.resolve();
+
+function haConfig() {
+  return normalizeHomeAssistant(config.homeAssistant);
+}
+
+function currentMeetingCode() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  try {
+    const u = new URL(mainWindow.webContents.getURL());
+    const m = u.pathname.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Which service to call in `service` mode, derived from the entity's domain so
+// the user only has to type one thing. Stateful toggles map join/leave onto
+// on/off, which is what you want for a single "in a meeting" helper entity;
+// automations and scripts just get triggered on both events.
+const HA_TOGGLE_DOMAINS = ['input_boolean', 'switch', 'light', 'fan', 'siren'];
+
+function haServiceFor(entityId, event) {
+  const domain = String(entityId).split('.')[0];
+  if (domain === 'automation') return { domain: 'automation', service: 'trigger' };
+  if (domain === 'script') return { domain: 'script', service: 'turn_on' };
+  if (domain === 'scene') return { domain: 'scene', service: 'turn_on' };
+  if (HA_TOGGLE_DOMAINS.includes(domain)) {
+    return { domain, service: event === 'leave' ? 'turn_off' : 'turn_on' };
+  }
+  return { domain: 'homeassistant', service: event === 'leave' ? 'turn_off' : 'turn_on' };
+}
+
+// Turn (config, event) into a concrete request, or an { error } describing what
+// the user still needs to fill in. Kept separate from the sending so the
+// Settings "Test" button can surface configuration problems verbatim.
+function haBuildRequest(ha, event, payload) {
+  const target = event === 'leave' ? ha.leave : ha.join;
+  if (!target) return { error: `No Home Assistant ${event} target configured` };
+
+  if (ha.mode === 'webhook') {
+    let url;
+    if (/^https?:\/\//i.test(target)) {
+      url = target;
+    } else if (!ha.baseUrl) {
+      return { error: 'Set the Home Assistant base URL, or paste a full webhook URL' };
+    } else {
+      url = `${ha.baseUrl}/api/webhook/${encodeURIComponent(target)}`;
+    }
+    return { url, headers: { 'Content-Type': 'application/json' }, body: payload };
+  }
+
+  // service mode
+  if (!ha.baseUrl) return { error: 'Set the Home Assistant base URL' };
+  if (!ha.token) return { error: 'Set a long-lived access token' };
+  if (!/^[a-z_]+\.[a-z0-9_]+$/.test(target)) {
+    return { error: `"${target}" isn't an entity ID (expected e.g. automation.meeting_started)` };
+  }
+  const { domain, service } = haServiceFor(target, event);
+  return {
+    url: `${ha.baseUrl}/api/services/${domain}/${service}`,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ha.token}`
+    },
+    // The REST API takes service data, not our envelope — the context we send
+    // to webhooks has nowhere to go here, so only entity_id travels.
+    body: { entity_id: target }
+  };
+}
+
+// Log/report-safe description of where a request went: strips the webhook ID
+// (it's a bearer secret) and any query string.
+function haRedact(url) {
+  return String(url).replace(/(\/api\/webhook\/)[^/?#]+/, '$1\u2026').split('?')[0];
+}
+
+async function haSend(url, headers, body, { timeoutMs = 5000, attempts = 2 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+      if (!res.ok) {
+        // 4xx is a configuration problem — a retry will fail identically.
+        if (res.status >= 400 && res.status < 500) {
+          return { ok: false, status: res.status, error: `HTTP ${res.status} from ${haRedact(url)}` };
+        }
+        lastErr = `HTTP ${res.status}`;
+      } else {
+        return { ok: true, status: res.status };
+      }
+    } catch (err) {
+      lastErr = err.name === 'AbortError' ? `timed out after ${timeoutMs}ms` : err.message;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < attempts) await new Promise((r) => setTimeout(r, 600));
+  }
+  return { ok: false, error: `${lastErr} (${haRedact(url)})` };
+}
+
+// `event` is 'join' | 'leave'. Failures are logged, never surfaced as dialogs —
+// a smart-home hook going quiet must not interrupt a meeting.
+function fireHomeAssistant(event, extra = {}) {
+  const ha = haConfig();
+  if (!ha.enabled) return Promise.resolve({ ok: false, skipped: true });
+
+  const payload = {
+    event,
+    app: 'meetloaf',
+    version: pkg.version,
+    meeting_code: currentMeetingCode(),
+    url: mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.getURL() : null,
+    timestamp: new Date().toISOString(),
+    ...extra
+  };
+
+  const req = haBuildRequest(ha, event, payload);
+  if (req.error) {
+    console.warn(`[meetloaf] Home Assistant ${event} not sent: ${req.error}`);
+    return Promise.resolve({ ok: false, error: req.error });
+  }
+
+  const run = haSend(req.url, req.headers, req.body).then((result) => {
+    if (result.ok) console.log(`[meetloaf] Home Assistant ${event} sent -> ${haRedact(req.url)}`);
+    else console.warn(`[meetloaf] Home Assistant ${event} failed: ${result.error}`);
+    return result;
+  });
+
+  // Chain rather than replace, so a quit-time flush waits for everything.
+  haPending = haPending.then(() => run).catch(() => {});
+  return run;
+}
+
+// Settings "Test" button: same path as a real event, but always sends (even
+// when the integration is disabled) and reports the outcome to the renderer.
+ipcMain.handle('ha:test', async (_e, which) => {
+  const event = which === 'leave' ? 'leave' : 'join';
+  const ha = haConfig();
+  const payload = {
+    event,
+    app: 'meetloaf',
+    version: pkg.version,
+    meeting_code: currentMeetingCode(),
+    url: null,
+    phase: event === 'leave' ? 'away' : (ha.joinOn === 'connected' ? 'in_call' : 'lobby'),
+    test: true,
+    timestamp: new Date().toISOString()
+  };
+  const req = haBuildRequest(ha, event, payload);
+  if (req.error) return { ok: false, error: req.error };
+  const result = await haSend(req.url, req.headers, req.body, { attempts: 1 });
+  return result.ok ? { ok: true, status: result.status } : { ok: false, error: result.error };
+});
+
+// Reported by the DOM watcher in main-inject.js (via main-preload.js), which
+// keys off the presence of Meet's "Leave call" control.
+ipcMain.on('main:meeting-phase', (e, raw) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // Only the Meet window speaks for meeting state — not auth popups or the
+  // transient windows Meet opens.
+  if (e.sender !== mainWindow.webContents) return;
+  observePhase(typeof raw === 'string' ? raw : 'unknown', 'dom');
+});
 
 // Triggered by the injected "MeetLoaf Settings" link in Meet's own modal.
 ipcMain.on('main:open-settings', () => openSettingsWindow());
@@ -393,6 +741,10 @@ function createWindow() {
   // `did-navigate-in-page` (Meet's SPA route changes) are needed.
   mainWindow.webContents.on('did-navigate', checkMeetingState);
   mainWindow.webContents.on('did-navigate-in-page', checkMeetingState);
+  // A crashed/killed renderer means the call is over even though no navigation
+  // happened — without this the "leave" event would never fire.
+  mainWindow.webContents.on('render-process-gone', () => commitPhase('away', 'renderer-gone'));
+  startPhasePoll();
 
   // Inject a thin draggable strip across the top of every Meet page so the
   // user can grab the window. Without this, Meet's content extends edge-to-edge
@@ -995,8 +1347,23 @@ if (!gotLock) {
     setTimeout(() => checkForUpdates(), 5000);
   });
 
-  app.on('before-quit', () => {
+  // Quitting mid-call is a "leave" — but the default quit tears the process
+  // down long before an HTTP request lands, so hold the quit just long enough
+  // to flush it. Guarded by haQuitFlushed since our own app.quit() re-enters.
+  let haQuitFlushed = false;
+  app.on('before-quit', (event) => {
     app.isQuitting = true;
+    if (haQuitFlushed) return;
+    haQuitFlushed = true;
+    if (!haPresent || !haConfig().enabled) return;
+
+    event.preventDefault();
+    commitPhase('away', 'quit');
+    const finish = () => app.quit();
+    Promise.race([
+      haPending,
+      new Promise((resolve) => setTimeout(resolve, 2500))
+    ]).then(finish, finish);
   });
 
   app.on('will-quit', () => globalShortcut.unregisterAll());

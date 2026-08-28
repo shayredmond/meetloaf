@@ -28,6 +28,12 @@
           </svg>
           <span>Routing</span>
         </button>
+        <button type="button" class="nav-item" data-target="homeassistant" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M12 3 3 11h2v9h6v-6h2v6h6v-9h2L12 3zm0 5.2a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2z"/>
+          </svg>
+          <span>Home Assistant</span>
+        </button>
         <button type="button" class="nav-item" data-target="about" role="tab" aria-selected="false">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
@@ -149,6 +155,86 @@
                 <li>Click <strong>Show folder</strong> here — Finder opens with the extension folder selected.</li>
                 <li>Drag the <code>extension-chrome</code> folder onto the extensions page (or use <strong>Load unpacked</strong> and select it).</li>
               </ol>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="panel-homeassistant" role="tabpanel" hidden>
+          <h2>Home Assistant</h2>
+          <p class="section-desc">Fire a Home Assistant automation when you join a meeting, and another when you leave. By default &ldquo;join&rdquo; means reaching the waiting room, so a camera or lighting scene is already up while you pick your devices.</p>
+
+          <div class="rows">
+            <div class="row toggle-row">
+              <label>Enabled</label>
+              <button type="button" class="switch" id="haEnabled" aria-label="Enable Home Assistant integration"><span class="slider"></span></button>
+            </div>
+
+            <div class="row field-row" id="haJoinOnRow">
+              <label>
+                Fire &ldquo;join&rdquo; when
+                <span class="row-help" id="haJoinOnHelp"></span>
+              </label>
+              <div class="segmented segmented-wide" role="radiogroup" aria-label="When to fire the join event">
+                <button type="button" class="segment" data-ha-joinon="lobby">Waiting room</button>
+                <button type="button" class="segment" data-ha-joinon="connected">Connected</button>
+              </div>
+            </div>
+
+            <div class="row field-row" id="haModeRow">
+              <label>
+                How to reach Home Assistant
+                <span class="row-help" id="haModeHelp"></span>
+              </label>
+              <div class="segmented segmented-wide" role="radiogroup" aria-label="How to reach Home Assistant">
+                <button type="button" class="segment" data-ha-mode="webhook">Webhook</button>
+                <button type="button" class="segment" data-ha-mode="service">Service call</button>
+              </div>
+            </div>
+
+            <div class="row field-row" id="haBaseUrlRow">
+              <label for="haBaseUrl">
+                Base URL
+                <span class="row-help">Or your Nabu&nbsp;Casa URL.</span>
+              </label>
+              <input type="url" class="text-input" id="haBaseUrl" placeholder="http://homeassistant.local:8123" spellcheck="false" autocomplete="off" />
+            </div>
+
+            <div class="row field-row" id="haTokenRow">
+              <label for="haToken">
+                Long-lived access token
+                <span class="row-help">Plain text in config.json &mdash; prefer Webhook mode if that file is in your dotfiles.</span>
+              </label>
+              <input type="password" class="text-input" id="haToken" placeholder="eyJhbGciOi&hellip;" spellcheck="false" autocomplete="off" />
+            </div>
+
+            <div class="row field-row" id="haJoinRow">
+              <label for="haJoin">
+                On join
+                <span class="row-help" id="haJoinHelp"></span>
+              </label>
+              <div class="field-actions">
+                <input type="text" class="text-input" id="haJoin" spellcheck="false" autocomplete="off" />
+                <button type="button" class="btn-link" data-ha-test="join">Test</button>
+              </div>
+            </div>
+
+            <div class="row field-row" id="haLeaveRow">
+              <label for="haLeave">
+                On leave
+                <span class="row-help" id="haLeaveHelp"></span>
+              </label>
+              <div class="field-actions">
+                <input type="text" class="text-input" id="haLeave" spellcheck="false" autocomplete="off" />
+                <button type="button" class="btn-link" data-ha-test="leave">Test</button>
+              </div>
+            </div>
+
+            <div class="row routing-help panel-note" id="haWebhookHelp">
+              Create an HA automation with a <strong>Webhook</strong> trigger and paste its ID above. The POST body carries <code>event</code>, <code>meeting_code</code>, <code>url</code> and <code>timestamp</code> &mdash; read them as <code>{{ trigger.json.event }}</code>.
+            </div>
+
+            <div class="row routing-help panel-note" id="haServiceHelp" hidden>
+              The service follows the entity's domain: <code>automation</code> &rarr; trigger, <code>script</code>/<code>scene</code> &rarr; turn on, toggles like <code>input_boolean</code> turn <strong>on</strong> to join and <strong>off</strong> to leave.
             </div>
           </div>
         </section>

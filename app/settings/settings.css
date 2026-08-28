@@ -43,6 +43,13 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The UA's [hidden] rule is display:none at the lowest specificity, so any
+   class that sets `display` (.row, .field-row, .routing-help) silently wins
+   and the element stays visible even with the attribute set. Toggling
+   `.hidden` in JS is the normal fix; this rule makes the attribute behave
+   the way the markup already assumes it does. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   background: var(--bg);
@@ -107,6 +114,11 @@ html, body {
 .panel {
   padding: 18px 24px 8px;
   min-width: 0;
+  /* Grid items default to min-height:auto, which lets this box grow past the
+     fixed window height — overflow-y then has nothing to scroll and the bottom
+     of a tall tab is simply unreachable. min-height:0 is what makes the
+     "panel scrolls internally if a tab overflows" intent actually hold. */
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -435,6 +447,83 @@ html, body {
 }
 
 .btn-link:hover { background: rgba(10, 132, 255, 0.1); }
+
+/* ─── Home Assistant panel — labelled text fields ────────────────────────── */
+
+/* Stack the label above a full-width input. The 2-column .row grid squeezes
+   an input into ~180px once the sidebar takes its share of a 620px window,
+   which is too narrow for a URL or a JWT. */
+.field-row {
+  display: block;
+}
+
+.field-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.field-actions .text-input { margin-top: 0; }
+.field-actions .btn-link { flex: 0 0 auto; }
+
+.text-input {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 9px;
+  background: var(--capture-bg);
+  border: 1px solid var(--capture-border);
+  border-radius: 6px;
+  color: var(--capture-fg);
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  /* body sets user-select:none / cursor:default for the chrome-like UI;
+     text fields have to opt back in or they can't be selected or edited. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  -webkit-app-region: no-drag;
+}
+
+.text-input::placeholder { color: var(--capture-empty-fg); }
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.18);
+}
+
+/* Full-width segmented control stacked under a field-row label. Purely a
+   layout class — the JS keys off the buttons' data attributes, so this can be
+   reused without one control's paint pass clobbering another's selection. */
+.segmented-wide {
+  display: flex;
+  width: 100%;
+  margin-top: 6px;
+}
+.segmented-wide .segment {
+  flex: 1;
+  text-align: center;
+  padding: 7px 12px;
+}
+
+/* Prose note inside a row — no list markers, dimmed like other help text. */
+.panel-note {
+  display: block;
+  padding: 11px 14px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+}
+
+/* Rows that don't apply to the current mode are dimmed rather than removed,
+   so the panel doesn't reflow as you flip between Webhook and Service call. */
+.row.field-row[data-inactive="true"] {
+  opacity: 0.45;
+}
 
 footer {
   margin-top: 0;
