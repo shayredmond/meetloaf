@@ -283,20 +283,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Pop out presentations — same `window` config section as the mode above.
-  const popOutBtn = document.getElementById('popOutPresentation');
-  if (popOutBtn) {
-    const popOutFromCfg = (w) => w?.popOutPresentation !== false;
-    popOutBtn.classList.toggle('checked', popOutFromCfg(cfg.window));
-    popOutBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const next = !popOutBtn.classList.contains('checked');
-      popOutBtn.classList.toggle('checked', next);
-      state.raw.window = { ...(state.raw.window || {}), popOutPresentation: next };
-      persistRaw();
-    });
-  }
-
   // Routing tab: Firefox extension install
   const firefoxStatus = document.getElementById('firefoxStatus');
   const installFirefoxBtn = document.getElementById('installFirefoxBtn');
