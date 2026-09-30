@@ -32,6 +32,18 @@ No `xattr` step, and no Gatekeeper prompt. The quarantine flag that triggers the
 > ```
 > Or approve it in **System Settings → Privacy & Security**, where a blocked app shows an **Open Anyway** button shortly after you try to launch it. (Right-click → Open no longer works on macOS 15+; Apple removed that bypass.)
 
+### macOS via Homebrew
+
+If the tap is set up (see below), this is the least-friction route — and `brew upgrade` keeps you current, which matters because macOS can't auto-update itself yet:
+
+```bash
+brew install --cask shayredmond/tap/meetloaf --no-quarantine
+```
+
+`--no-quarantine` is required: MeetLoaf is ad-hoc signed rather than notarized, and Homebrew quarantines casks by default. Without it you'll get the same "damaged" error described above.
+
+Later, `brew upgrade --cask meetloaf` picks up new releases.
+
 ### Windows 10/11
 
 ```powershell
@@ -136,6 +148,20 @@ Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/l
 > **Note on Picture-in-Picture:** Meet's own *More options → Picture-in-picture* doesn't work inside MeetLoaf. It relies on the Document Picture-in-Picture API, which Electron doesn't render ([electron#39633](https://github.com/electron/electron/issues/39633)). The older per-video `requestPictureInPicture` API is wired up in Electron and renders for an ordinary video, but on Meet's remote WebRTC tiles it surfaces no window and the request never completes (the meeting keeps working — it doesn't crash). Both were tested and ruled out — MeetLoaf has no PiP. Use always-on-top (Settings → Window) to keep the call visible instead.
 
 > **Note on the presentation pop-out (0.1.6, removed in 0.1.7):** a version that auto-detected a remote participant's screen share and split it into its own window shipped briefly and was pulled. The window mechanism itself worked — a `window.open()` popup from the Meet page is same-origin and shares its renderer, so the `<video>` inside it can take Meet's own `MediaStream` by reference, no re-capture needed. What didn't work was *detection*: inferring "this tile is a screen share" from generic video properties (`object-fit`, resolution, aspect ratio, relative tile size) produced false positives on join and wasn't reliable in practice. Anyone revisiting this should start by finding a stable marker in Meet's own markup rather than scoring heuristics.
+
+### Setting up the Homebrew tap (one-time)
+
+The cask lives at [`packaging/homebrew/meetloaf.rb`](packaging/homebrew/meetloaf.rb) in this repo, and `.github/workflows/homebrew.yml` renders it into a tap whenever a release is **published**. Two things have to exist before it does anything:
+
+1. **A tap repository** named `homebrew-tap` under your account — the `homebrew-` prefix is what lets `brew install --cask shayredmond/tap/meetloaf` resolve. It can be empty; the workflow creates `Casks/meetloaf.rb` on first run.
+   ```bash
+   gh repo create shayredmond/homebrew-tap --public --description "Homebrew tap for MeetLoaf"
+   ```
+2. **A `TAP_TOKEN` secret** on this repo — a fine-grained PAT with **Contents: read and write** on the tap repo only. The default `GITHUB_TOKEN` can't write to another repository, which is why this needs its own.
+
+Without the secret the workflow still runs and renders the cask, then logs that it skipped publishing — so nothing breaks for anyone who hasn't set a tap up.
+
+It deliberately triggers on *published*, not on the tag build: releases are created as drafts, and a cask pointing at a draft's download URL would 404 for everyone until you pressed Publish. Set `TAP_REPO` as a repository variable to point somewhere other than `shayredmond/homebrew-tap`.
 
 ### Build a DMG locally
 

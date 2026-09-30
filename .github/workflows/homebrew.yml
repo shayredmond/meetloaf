@@ -1,0 +1,87 @@
+name: Homebrew tap
+
+# Fires when a release is *published*, not when it's built. The release job
+# leaves a draft, and a cask pointing at a draft's download URL would 404 for
+# everyone until you pressed Publish — so the tap follows the decision to
+# publish rather than the build.
+on:
+  release:
+    types: [published]
+  # Re-run against an existing release, e.g. after fixing the tap token.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish to the tap (e.g. v0.2.1)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-cask:
+    name: Update the Homebrew cask
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the release
+        id: rel
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          [ -n "$TAG" ] || { echo "::error::No tag to work from"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # Checksummed from the published asset rather than the build artifact, so
+      # the cask can only ever describe a file people can actually download.
+      - name: Download the DMG and checksum it
+        id: dmg
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/MeetLoaf-mac-arm64.dmg"
+          echo "Fetching $URL"
+          curl -fsSL --retry 3 -o MeetLoaf.dmg "$URL"
+          SHA=$(sha256sum MeetLoaf.dmg | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Checksum: $SHA"
+
+      - name: Render the cask
+        env:
+          VERSION: ${{ steps.rel.outputs.version }}
+          SHA: ${{ steps.dmg.outputs.sha256 }}
+        run: |
+          sed -e "s/__VERSION__/${VERSION}/" -e "s/__SHA256__/${SHA}/" \
+            packaging/homebrew/meetloaf.rb > meetloaf.rb
+          grep -q '__VERSION__\|__SHA256__' meetloaf.rb && {
+            echo "::error::Placeholder left unreplaced in the rendered cask"; exit 1; }
+          cat meetloaf.rb
+
+      # Skips cleanly rather than failing when the token is absent, so the repo
+      # works for anyone who hasn't set up a tap.
+      - name: Push it to the tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAP_REPO: ${{ vars.TAP_REPO || 'shayredmond/homebrew-tap' }}
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::notice::TAP_TOKEN is not set — rendered the cask but skipped publishing."
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Casks
+          cp meetloaf.rb tap/Casks/meetloaf.rb
+          cd tap
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Casks/meetloaf.rb
+          if git diff --cached --quiet; then
+            echo "Cask already up to date."
+            exit 0
+          fi
+          git commit -m "meetloaf ${VERSION}"
+          git push
+          echo "::notice::Tap updated to ${VERSION}"
