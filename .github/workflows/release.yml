@@ -1,20 +1,44 @@
-name: Release
+name: Build & Release
 
 on:
+  # Build both platforms on every PR. Windows regressions used to surface only
+  # when someone cut a tag, which is the worst place to find them.
+  pull_request:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
 
-# action-gh-release needs contents:write to create the Release.
-# The default GITHUB_TOKEN scope is read-only, hence the v0.1.0 upload failure.
+# Read-only by default; only the release job needs to write, and it asks for
+# that itself. (The v0.1.0 upload failure was the default read-only token.)
 permissions:
-  contents: write
+  contents: read
+
+# One run per ref. PR runs supersede each other, but a tag build is never
+# cancelled — that's a release in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    name: Build arm64 DMG
-    runs-on: macos-14
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing shouldn't deny you the other's artifact.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS (arm64 DMG)
+            build: npm run dist
+            artifact: MeetLoaf-macos
+            path: app/dist/*.dmg
+          - os: windows-latest
+            name: Windows (x64 + arm64 installers)
+            build: npm run dist:win
+            artifact: MeetLoaf-windows
+            path: app/dist/*.exe
     defaults:
       run:
         working-directory: app
@@ -28,74 +52,76 @@ jobs:
           cache: 'npm'
           cache-dependency-path: app/package-lock.json
 
+      # macOS rasterises icon.svg with rsvg-convert; Windows uses the
+      # @resvg/resvg-js devDependency and needs nothing from the system.
       - name: Install librsvg
+        if: runner.os == 'macOS'
         run: brew install librsvg
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build icon
-        run: ./scripts/build-icon.sh
+      # Each build script generates its own icons first, so there's no
+      # separate icon step. Windows installers are unsigned: SmartScreen shows
+      # "Windows protected your PC" (More info → Run anyway), the counterpart
+      # of the macOS quarantine prompt. Set CSC_LINK / CSC_KEY_PASSWORD to
+      # remove it if a signing cert ever lands.
+      - name: Build
+        run: ${{ matrix.build }}
 
-      - name: Build & sign DMG
-        run: ./scripts/build-dmg.sh
-
-      - name: Upload DMG as release asset
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          files: app/dist/*.dmg
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload DMG as workflow artifact
+      # Always artifacts, never a release. Publishing is the release job's
+      # job alone, so the two platforms can't race to create the same release.
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: "!startsWith(github.ref, 'refs/tags/v')"
         with:
-          name: MeetLoaf-dmg
-          path: app/dist/*.dmg
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
 
-  build-windows:
-    name: Build Windows installer
-    runs-on: windows-latest
-    # Run after the macOS job so only one job creates the GitHub Release;
-    # two jobs racing to create the same release can fail with already_exists.
+  release:
+    name: Publish GitHub Release
     needs: build
-    defaults:
-      run:
-        working-directory: app
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # The in-app update checker compares the release's tag against
+      # app.getVersion(). Tagging v0.1.8 while package.json still says 0.1.7
+      # would prompt every user to "upgrade" to a build reporting the version
+      # they already run — permanently, since the prompt never stops being
+      # true. Cheaper to refuse the release than to yank it afterwards.
+      - name: Tag must match package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./app/package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match app/package.json version $PKG"
+            exit 1
+          fi
+          echo "Tag and package.json agree on $PKG"
+
+      - name: Collect every platform's artifacts
+        uses: actions/download-artifact@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: app/package-lock.json
+          path: dist
+          merge-multiple: true
 
-      - name: Install dependencies
-        run: npm ci
-
-      # Unsigned: Windows SmartScreen shows "Windows protected your PC" on
-      # first run (More info → Run anyway) — the Windows counterpart of the
-      # macOS quarantine prompt. Add a code-signing cert via CSC_LINK /
-      # CSC_KEY_PASSWORD secrets to remove it.
-      - name: Build installers (x64 + arm64)
-        run: npm run dist:win
-
-      - name: Upload installers as release assets
+      # Published as a DRAFT on purpose. The tag builds everything and
+      # assembles the release, but nothing is public until you press Publish
+      # in the GitHub UI — so you can download the DMG and the installers and
+      # try them first. It also keeps users quiet until then: the update
+      # checker reads /releases/latest, which excludes drafts.
+      - name: Assemble draft release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: app/dist/*.exe
+          files: dist/**
+          generate_release_notes: true
+          draft: true
+          # An empty release is worse than a failed one.
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload installers as workflow artifact
-        uses: actions/upload-artifact@v4
-        if: "!startsWith(github.ref, 'refs/tags/v')"
-        with:
-          name: MeetLoaf-windows
-          path: app/dist/*.exe

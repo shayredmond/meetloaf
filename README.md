@@ -127,9 +127,16 @@ Drop that file into Slack / Drive / wherever and colleagues can use the install 
    git tag v0.2.0
    git push origin v0.2.0
    ```
-3. CI (`.github/workflows/release.yml`) builds the DMG on a `macos-14` runner (Apple Silicon) and attaches it to a GitHub Release named `v0.2.0`.
+3. CI (`.github/workflows/release.yml`) builds both platforms in parallel — the arm64 DMG on `macos-14`, the x64 + arm64 installers on `windows-latest` — then a separate `release` job collects both into a GitHub Release named `v0.2.0`.
+4. **The release is created as a draft.** Nothing is public yet. Open it under [Releases](https://github.com/shayredmond/meetloaf/releases), download the DMG and the installers, check they run, then press **Publish release**.
 
-Colleagues on older versions get prompted by MeetLoaf's update checker within 5 seconds of next launch.
+Step 4 is the point of no return, and the only one that reaches your colleagues — the update checker reads `/releases/latest`, which excludes drafts. If something's wrong, delete the draft and the release never existed. Merging a PR does none of this: only a `v*` tag starts a release at all.
+
+The same workflow runs on every pull request, building both platforms and uploading them as workflow artifacts without publishing anything. That's deliberate: a Windows build problem should surface on the PR, not halfway through cutting a release. Only a `v*` tag reaches the `release` job, and only that job gets a write-scoped token.
+
+The release job refuses to run if the tag and `app/package.json` disagree — tagging `v0.2.0` against a `0.1.9` package.json would otherwise prompt everyone to upgrade to a build reporting the version they already have, and keep prompting forever.
+
+Once you publish, colleagues on older versions get prompted by MeetLoaf's update checker within 5 seconds of next launch.
 
 ### About signing
 
