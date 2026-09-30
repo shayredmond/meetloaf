@@ -37,10 +37,21 @@ codesign --force --deep --sign - "$APP_DIR"
 codesign --verify --deep "$APP_DIR"
 
 # 4. Package into a DMG
+#
+# Staged through a temp folder holding the app plus a symlink to /Applications,
+# which is what gives the mounted volume the familiar drag-across-to-install
+# layout. Pointing hdiutil straight at the .app (as this did before) produces a
+# volume containing only the app, leaving people to find /Applications
+# themselves. The symlink costs nothing in the image — it's a link, not a copy.
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+cp -R "$APP_DIR" "$STAGING/"
+ln -s /Applications "$STAGING/Applications"
+
 rm -f "$DMG_OUT"
 hdiutil create \
   -volname "$APP_NAME" \
-  -srcfolder "$APP_DIR" \
+  -srcfolder "$STAGING" \
   -ov -format UDZO \
   "$DMG_OUT"
 

@@ -24,6 +24,8 @@ hdiutil detach /Volumes/MeetLoaf
 open -a MeetLoaf
 ```
 
+Or open the DMG in Finder and drag MeetLoaf across to the Applications shortcut — but see the Gatekeeper note below if you got the DMG from a browser.
+
 No `xattr` step, and no Gatekeeper prompt. The quarantine flag that triggers the "MeetLoaf is damaged" error isn't a property of the app — it's added by whatever downloads it, and only apps that opt in (browsers, Slack, Mail) do. `curl` doesn't, so there's nothing to strip.
 
 > **If you downloaded it through a browser instead**, the flag is there and macOS will refuse to open the app. Fix it with:
