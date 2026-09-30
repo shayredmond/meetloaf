@@ -15,3 +15,4 @@ extension/web-ext-artifacts/
 # build ships without the extension and Settings -> Routing -> Install
 # reports it as missing.
 .DS_Store
+extension/.amo-upload-uuid
