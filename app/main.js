@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -87,6 +87,7 @@ const DEFAULT_SHORTCUTS = {
   camera: { accelerator: '', global: true },
   hand: { accelerator: '', global: true },
   toggleWindow: { accelerator: '', global: true },
+  newMeeting: { accelerator: '', global: true },
   leave: { accelerator: 'CmdOrCtrl+W', global: false }
 };
 
@@ -375,10 +376,97 @@ function checkMeetingState() {
     if (phase !== 'away') commitPhase('away', 'navigation');
     return;
   }
+  // We're on a meeting URL — if a link was asked for, this is it. Runs before
+  // the phase work because the link is worth having at the green room, before
+  // you've joined.
+  copyMeetingLinkIfPending();
   // Arriving at a meeting URL: re-evaluate with whatever the DOM last said.
   // On an in-page navigation the phase string may not change at all, so the
   // renderer's own change-detection wouldn't report anything.
   observePhase(phaseObserved, 'navigation');
+}
+
+// ─── Instant meeting ───────────────────────────────────────────────────────
+//
+// meet.google.com/new creates a meeting and redirects to its real URL, so the
+// link can be read straight off the address bar once we land. That's the whole
+// reason this doesn't touch the DOM: Meet's "Copy joining info" button would
+// mean finding a control by its label, clicking it, and reading back whatever
+// it put on the clipboard — three fragile steps to obtain something the URL
+// already tells us, and it would yield a multi-line block with a dial-in
+// number rather than a link you'd paste into a chat.
+const INSTANT_MEETING_URL = 'https://meet.google.com/new';
+// How long to keep waiting for the redirect. /new resolves in a second or two;
+// longer than this means we were bounced to a sign-in page or refused by a
+// Workspace policy, and there is nothing worth copying.
+const INSTANT_MEETING_TIMEOUT_MS = 20000;
+
+let instantCopyTimer = null;
+
+function cancelInstantCopy(reason) {
+  if (!instantCopyTimer) return;
+  clearTimeout(instantCopyTimer);
+  instantCopyTimer = null;
+  if (reason) console.log(`[meetloaf] instant meeting: ${reason}`);
+}
+
+function notify(title, body) {
+  try {
+    if (!Notification.isSupported()) return;
+    // Silent: a global shortcut is usually pressed while you're mid-sentence
+    // in another app, and this is a confirmation, not an alert.
+    new Notification({ title, body, silent: true }).show();
+  } catch (err) {
+    console.warn(`Notification failed: ${err.message}`);
+  }
+}
+
+function startInstantMeeting() {
+  // The shortcut is global by default, so it can arrive from another app —
+  // possibly from someone who has forgotten they're already in a call.
+  // Navigating away would hang up on them without asking.
+  if (inMeeting) {
+    console.log('[meetloaf] instant meeting ignored — already in a call');
+    notify('Already in a meeting', 'Leave the current call first.');
+    return;
+  }
+  if (!app.isReady()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (!mainWindow) return;
+  mainWindow.show();
+  mainWindow.focus();
+
+  cancelInstantCopy();
+  instantCopyTimer = setTimeout(
+    () => cancelInstantCopy('gave up waiting for the meeting URL'),
+    INSTANT_MEETING_TIMEOUT_MS
+  );
+  mainWindow.loadURL(INSTANT_MEETING_URL);
+}
+
+// Called from checkMeetingState, which already runs on every navigation.
+//
+// Deliberately *not* cancelled when a navigation lands somewhere that isn't a
+// meeting: /new redirects, and whether that redirect arrives as one navigation
+// or two (server-side vs. from the page) isn't ours to rely on. Cancelling on
+// the first non-meeting URL would abandon the copy one step early. The timeout
+// is the only thing that gives up, so the worst case is copying a meeting link
+// the user reached another way within the window — still a correct link.
+function copyMeetingLinkIfPending() {
+  if (!instantCopyTimer || !mainWindow || mainWindow.isDestroyed()) return;
+  let link;
+  try {
+    const u = new URL(mainWindow.webContents.getURL());
+    // Canonical form only. Meet appends ?authuser=… and friends, which nobody
+    // wants pasted into a chat.
+    link = `https://meet.google.com${u.pathname.replace(/\/$/, '')}`;
+  } catch {
+    return;
+  }
+  cancelInstantCopy();
+  clipboard.writeText(link);
+  console.log(`[meetloaf] instant meeting link copied: ${link}`);
+  notify('Meeting link copied', link);
 }
 
 function startPhasePoll() {
@@ -836,7 +924,10 @@ function createWindow() {
   mainWindow.webContents.on('did-navigate-in-page', checkMeetingState);
   // A crashed/killed renderer means the call is over even though no navigation
   // happened — without this the "leave" event would never fire.
-  mainWindow.webContents.on('render-process-gone', () => commitPhase('away', 'renderer-gone'));
+  mainWindow.webContents.on('render-process-gone', () => {
+    cancelInstantCopy('renderer gone');
+    commitPhase('away', 'renderer-gone');
+  });
   startPhasePoll();
 
   // Inject a thin draggable strip across the top of every Meet page so the
@@ -1436,6 +1527,7 @@ function registerShortcuts() {
   bind(s.camera, () => clickByAriaLabel('turn (on|off) camera'));
   bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
   bind(s.toggleWindow, () => toggleMainWindow());
+  bind(s.newMeeting, () => startInstantMeeting());
   bind(s.leave, () => clickByAriaLabel('leave call'));
 }
 
