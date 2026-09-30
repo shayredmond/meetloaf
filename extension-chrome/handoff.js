@@ -2,12 +2,12 @@
 // (as handoff.html#abc-defg-hij) before the Meet page can load. We launch
 // meet://, then get the tab out of the way.
 //
-// The first launch shows the browser's "Open MeetLoaf?" prompt. Closing the
-// tab would dismiss it, so the first time we stay put and explain; once the
-// user confirms, later hand-offs close/go back automatically.
+// The tab closes itself after a short countdown. That's long enough to answer
+// the browser's "Open MeetLoaf?" prompt on first use (closing the tab earlier
+// would dismiss it); clicking any button cancels the countdown.
 
 const CODE_RE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
-const AUTO_CLOSE_MS = 1500;
+const AUTO_CLOSE_SECONDS = 10;
 
 const code = decodeURIComponent(location.hash.slice(1)).toLowerCase();
 const $ = (id) => document.getElementById(id);
@@ -32,12 +32,36 @@ async function tidyUp() {
   if (tab) chrome.tabs.remove(tab.id);
 }
 
+let countdown = null;
+function stopCountdown() {
+  clearInterval(countdown);
+  countdown = null;
+  $('closing').hidden = true;
+}
+
+function startCountdown() {
+  let left = AUTO_CLOSE_SECONDS;
+  const paint = () => { $('closing').textContent = `This tab will close in ${left}s.`; };
+  $('closing').hidden = false;
+  paint();
+  countdown = setInterval(async () => {
+    left -= 1;
+    if (left > 0) return paint();
+    stopCountdown();
+    // It launched and nobody objected — no need for the first-run help again.
+    await chrome.storage.local.set({ handoffConfirmed: true });
+    tidyUp();
+  }, 1000);
+}
+
 $('inBrowser').addEventListener('click', async () => {
+  stopCountdown();
   await chrome.runtime.sendMessage({ type: 'allow-in-tab' });
   location.replace(`https://meet.google.com/${code}`);
 });
-$('retry').addEventListener('click', launch);
+$('retry').addEventListener('click', () => { stopCountdown(); launch(); });
 $('done').addEventListener('click', async () => {
+  stopCountdown();
   await chrome.storage.local.set({ handoffConfirmed: true });
   tidyUp();
 });
@@ -46,6 +70,7 @@ $('done').addEventListener('click', async () => {
   if (!CODE_RE.test(code)) {
     $('title').textContent = 'MeetLoaf Router';
     $('invalid').hidden = false;
+    $('done').hidden = true;
     $('retry').hidden = true;
     $('inBrowser').hidden = true;
     return;
@@ -55,10 +80,7 @@ $('done').addEventListener('click', async () => {
   launch();
 
   const { handoffConfirmed } = await chrome.storage.local.get('handoffConfirmed');
-  if (!handoffConfirmed) {
-    $('firstRun').hidden = false;
-    return;
-  }
-  $('closing').hidden = false;
-  setTimeout(tidyUp, AUTO_CLOSE_MS);
+  $('firstRun').hidden = !!handoffConfirmed;
+  $('title').textContent = 'Opened in MeetLoaf';
+  startCountdown();
 })();
