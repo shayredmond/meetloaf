@@ -151,17 +151,31 @@ Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/l
 
 ### Setting up the Homebrew tap (one-time)
 
-The cask lives at [`packaging/homebrew/meetloaf.rb`](packaging/homebrew/meetloaf.rb) in this repo, and `.github/workflows/homebrew.yml` renders it into a tap whenever a release is **published**. Two things have to exist before it does anything:
+The cask lives at [`packaging/homebrew/meetloaf.rb`](packaging/homebrew/meetloaf.rb) in this repo, and `.github/workflows/homebrew.yml` renders it into a tap whenever a release is **published**. Three things have to exist before it does anything:
 
-1. **A tap repository** named `homebrew-tap` under your account — the `homebrew-` prefix is what lets `brew install --cask shayredmond/tap/meetloaf` resolve. It can be empty; the workflow creates `Casks/meetloaf.rb` on first run.
+1. **A tap repository** named `homebrew-tap` under your account — the `homebrew-` prefix is what lets `brew install --cask shayredmond/tap/meetloaf` resolve. It can be empty; the workflow creates `Casks/meetloaf.rb` and a README on first run.
    ```bash
    gh repo create shayredmond/homebrew-tap --public --description "Homebrew tap for MeetLoaf"
    ```
-2. **A `TAP_TOKEN` secret** on this repo — a fine-grained PAT with **Contents: read and write** on the tap repo only. The default `GITHUB_TOKEN` can't write to another repository, which is why this needs its own.
+2. **A `tap-publish` environment** on this repo, which is what the deploy key is scoped to:
+   ```bash
+   gh api -X PUT repos/shayredmond/meetloaf/environments/tap-publish
+   ```
+   Add a **required reviewer** to it under Settings → Environments if you want each tap push to wait for your approval. Worth considering: this credential can change what `brew install` delivers to everyone using the tap, and an approval gate means a modified workflow can't use it unattended.
+3. **A deploy key**, held as an environment secret. A deploy key is scoped to one repository by construction and never expires, so there's no renewal to forget:
+   ```bash
+   ssh-keygen -t ed25519 -f meetloaf-tap -N "" -C "meetloaf release -> homebrew-tap"
+   gh repo deploy-key add meetloaf-tap.pub --repo shayredmond/homebrew-tap --title "meetloaf release" --allow-write
+   gh secret set TAP_DEPLOY_KEY --repo shayredmond/meetloaf --env tap-publish < meetloaf-tap
+   rm meetloaf-tap meetloaf-tap.pub
+   ```
+   The private key goes from the file straight into the secret and both files are deleted, so it never appears on screen or in shell history.
 
 Without the secret the workflow still runs and renders the cask, then logs that it skipped publishing — so nothing breaks for anyone who hasn't set a tap up.
 
 It deliberately triggers on *published*, not on the tag build: releases are created as drafts, and a cask pointing at a draft's download URL would 404 for everyone until you pressed Publish. Set `TAP_REPO` as a repository variable to point somewhere other than `shayredmond/homebrew-tap`.
+
+**On log exposure:** the key is written to a file and is never an argument to git. A token embedded in an HTTPS remote URL can surface in git's own error messages; an SSH remote carries no credential at all. Actions masks secrets either way, but this repo's logs are public, so the smaller surface matters. GitHub's SSH host key is pinned from `api.github.com/meta` rather than accepted trust-on-first-use.
 
 ### Build a DMG locally
 

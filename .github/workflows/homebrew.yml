@@ -21,6 +21,11 @@ jobs:
   update-cask:
     name: Update the Homebrew cask
     runs-on: ubuntu-latest
+    # Holds the deploy key as an *environment* secret rather than a repository
+    # one, so it only decrypts for this job. Add a required reviewer to the
+    # environment and the key stays sealed until you approve the run — worth it
+    # for a credential that can change what `brew install` delivers.
+    environment: tap-publish
 
     steps:
       - uses: actions/checkout@v4
@@ -63,15 +68,30 @@ jobs:
       # works for anyone who hasn't set up a tap.
       - name: Push it to the tap
         env:
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
           TAP_REPO: ${{ vars.TAP_REPO || 'shayredmond/homebrew-tap' }}
           VERSION: ${{ steps.rel.outputs.version }}
         run: |
-          if [ -z "$TAP_TOKEN" ]; then
-            echo "::notice::TAP_TOKEN is not set — rendered the cask but skipped publishing."
+          if [ -z "$TAP_DEPLOY_KEY" ]; then
+            echo "::notice::TAP_DEPLOY_KEY is not set — rendered the cask but skipped publishing."
             exit 0
           fi
-          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+
+          # The key goes straight into a file and is never an argument to git.
+          # A token embedded in an HTTPS remote URL can reach the log via git's
+          # own error messages; an SSH remote carries no credential at all.
+          # Actions masks secrets either way, but this repo's logs are public,
+          # so the smaller surface is worth having.
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          # Pinned from api.github.com/meta rather than trust-on-first-use via
+          # ssh-keyscan, which would accept whatever answers on the day.
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
+
+          git clone --depth 1 "git@github.com:${TAP_REPO}.git" tap
           mkdir -p tap/Casks
           cp meetloaf.rb tap/Casks/meetloaf.rb
           cd tap
@@ -87,22 +107,20 @@ jobs:
           # A first-run tap has no README either, and an empty repo page tells
           # nobody what this is or how to install from it.
           if [ ! -f README.md ]; then
-            cat > README.md <<'MD'
-          # Homebrew tap
-
-          ```bash
-          brew install --cask shayredmond/tap/meetloaf --no-quarantine
-          ```
-
-          `--no-quarantine` is required: MeetLoaf is ad-hoc signed rather than
-          notarized, so macOS would otherwise refuse to open it.
-
-          `Casks/meetloaf.rb` is generated — it's written by the release workflow in
-          [shayredmond/meetloaf](https://github.com/shayredmond/meetloaf) from
-          `packaging/homebrew/meetloaf.rb`. Edit it there, not here.
-          MD
-            # The heredoc above is indented to match this block; strip it back out.
-            sed -i 's/^          //' README.md
+            printf '%s\n' \
+              '# Homebrew tap' \
+              '' \
+              '```bash' \
+              'brew install --cask shayredmond/tap/meetloaf --no-quarantine' \
+              '```' \
+              '' \
+              '`--no-quarantine` is required: MeetLoaf is ad-hoc signed rather than' \
+              'notarized, so macOS would otherwise refuse to open it.' \
+              '' \
+              '`Casks/meetloaf.rb` is generated — the release workflow in' \
+              '[shayredmond/meetloaf](https://github.com/shayredmond/meetloaf) writes it' \
+              'from `packaging/homebrew/meetloaf.rb`. Edit it there, not here.' \
+              > README.md
             git add README.md
           fi
 
