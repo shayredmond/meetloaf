@@ -5,10 +5,17 @@ const fs = require('fs');
 const os = require('os');
 const pkg = require('./package.json');
 
+const IS_MAC = process.platform === 'darwin';
+const IS_WIN = process.platform === 'win32';
+
 const MEET_URL = 'https://meet.google.com/';
 const MEETING_CODE_RE = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(\/|$)/;
+// Report the real OS so Meet shows the right shortcut hints (⌘ vs Ctrl).
+const UA_PLATFORM = IS_MAC
+  ? 'Macintosh; Intel Mac OS X 10_15_7'
+  : IS_WIN ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64';
 const USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 ` +
   '(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
 
 const BUNDLED_CONFIG = path.join(__dirname, 'config.json');
@@ -71,7 +78,7 @@ let config = { shortcuts: {}, window: { width: 1200, height: 800 }, homeAssistan
 
 // Built-in shortcut defaults. Seeded into every loaded config so that keys
 // absent from an existing config.json (e.g. after an upgrade) still get their
-// intended binding. `leave` defaults to Cmd+W and is intentionally NOT global:
+// intended binding. `leave` defaults to Cmd+W (Ctrl+W on Windows/Linux) and is intentionally NOT global:
 // a global Cmd+W would hijack window-close in every app. Local-only means it
 // only leaves the meeting while MeetLoaf is focused — matching the muscle
 // memory of "Cmd+W closes the thing in front of me".
@@ -80,8 +87,35 @@ const DEFAULT_SHORTCUTS = {
   camera: { accelerator: '', global: true },
   hand: { accelerator: '', global: true },
   toggleWindow: { accelerator: '', global: true },
-  leave: { accelerator: 'Cmd+W', global: false }
+  leave: { accelerator: 'CmdOrCtrl+W', global: false }
 };
+
+// Accelerators are stored as typed (and configs written on a Mac say "Cmd"),
+// but Electron ignores Cmd outside macOS. Canonicalise to the modifiers this
+// platform actually has, in the same fixed order accelFromInput() produces,
+// so "Cmd+W" from a synced dotfile still means Ctrl+W on Windows/Linux.
+const MODIFIER_ORDER = ['Cmd', 'Super', 'Ctrl', 'Alt', 'Shift'];
+const MODIFIER_ALIASES = {
+  Cmd: IS_MAC ? 'Cmd' : 'Ctrl', Command: IS_MAC ? 'Cmd' : 'Ctrl',
+  CmdOrCtrl: IS_MAC ? 'Cmd' : 'Ctrl', CommandOrControl: IS_MAC ? 'Cmd' : 'Ctrl',
+  Super: IS_MAC ? 'Cmd' : 'Super', Meta: IS_MAC ? 'Cmd' : 'Super',
+  Ctrl: 'Ctrl', Control: 'Ctrl',
+  Alt: 'Alt', Option: 'Alt', AltGr: 'Alt',
+  Shift: 'Shift'
+};
+
+function normalizeAccelerator(accel) {
+  if (!accel) return '';
+  const mods = new Set();
+  let key = null;
+  for (const part of accel.split('+')) {
+    const mod = MODIFIER_ALIASES[part];
+    if (mod) mods.add(mod);
+    else key = part;
+  }
+  if (!key) return '';
+  return [...MODIFIER_ORDER.filter((m) => mods.has(m)), key].join('+');
+}
 
 // Shortcuts used to be stored as bare accelerator strings; now each is
 // { accelerator, global } so users can opt out of OS-global registration
@@ -538,7 +572,30 @@ ipcMain.on('main:open-settings', () => openSettingsWindow());
 // Firefox-family browsers — all share Mozilla's WebExtensions runtime and
 // accept signed XPIs. Order matters: more-canonical builds first so we
 // pick a "real" Firefox if both are installed.
-const FIREFOX_CANDIDATES = [
+//
+// On macOS each entry is an .app bundle; on Windows it's a list of likely
+// .exe locations (per-machine installs under Program Files, per-user ones
+// under %LOCALAPPDATA%). The first path that exists wins.
+const WIN_DIRS = {
+  pf: process.env.ProgramFiles || 'C:\\Program Files',
+  pf86: process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+  local: process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+};
+
+function winPaths(rel) {
+  return [WIN_DIRS.pf, WIN_DIRS.pf86, WIN_DIRS.local, path.join(WIN_DIRS.local, 'Programs')]
+    .map((base) => path.join(base, rel));
+}
+
+const FIREFOX_CANDIDATES = IS_WIN ? [
+  { name: 'Firefox', paths: winPaths('Mozilla Firefox\\firefox.exe') },
+  { name: 'Firefox Developer Edition', paths: winPaths('Firefox Developer Edition\\firefox.exe') },
+  { name: 'Firefox Nightly', paths: winPaths('Firefox Nightly\\firefox.exe') },
+  { name: 'Zen Browser', paths: winPaths('Zen Browser\\zen.exe') },
+  { name: 'LibreWolf', paths: winPaths('LibreWolf\\librewolf.exe') },
+  { name: 'Waterfox', paths: winPaths('Waterfox\\waterfox.exe') },
+  { name: 'Floorp', paths: winPaths('Ablaze Floorp\\floorp.exe') }
+] : [
   { name: 'Firefox', path: '/Applications/Firefox.app' },
   { name: 'Firefox Developer Edition', path: '/Applications/Firefox Developer Edition.app' },
   { name: 'Firefox Nightly', path: '/Applications/Firefox Nightly.app' },
@@ -553,7 +610,18 @@ const FIREFOX_CANDIDATES = [
 // Chromium-family detection is in place for future use — we don't ship
 // a Chrome extension yet, so the Routing tab won't act on these. Listed
 // here so adding the action later is a one-liner.
-const CHROMIUM_CANDIDATES = [
+const CHROMIUM_CANDIDATES = IS_WIN ? [
+  { name: 'Google Chrome', paths: winPaths('Google\\Chrome\\Application\\chrome.exe') },
+  { name: 'Google Chrome Canary', paths: winPaths('Google\\Chrome SxS\\Application\\chrome.exe') },
+  { name: 'Chromium', paths: winPaths('Chromium\\Application\\chrome.exe') },
+  { name: 'Brave Browser', paths: winPaths('BraveSoftware\\Brave-Browser\\Application\\brave.exe') },
+  { name: 'Vivaldi', paths: winPaths('Vivaldi\\Application\\vivaldi.exe') },
+  { name: 'Opera', paths: winPaths('Opera\\opera.exe') },
+  { name: 'Thorium', paths: winPaths('Thorium\\Application\\thorium.exe') },
+  // Last: Edge ships with Windows, so it's nearly always present and would
+  // otherwise shadow the browser people actually use.
+  { name: 'Microsoft Edge', paths: winPaths('Microsoft\\Edge\\Application\\msedge.exe') }
+] : [
   { name: 'Google Chrome', path: '/Applications/Google Chrome.app' },
   { name: 'Google Chrome Canary', path: '/Applications/Google Chrome Canary.app' },
   { name: 'Chromium', path: '/Applications/Chromium.app' },
@@ -567,13 +635,42 @@ const CHROMIUM_CANDIDATES = [
 
 function findInList(candidates) {
   for (const c of candidates) {
-    if (fs.existsSync(c.path)) return c;
+    for (const p of c.paths || [c.path]) {
+      if (fs.existsSync(p)) return { name: c.name, path: p };
+    }
   }
   return null;
 }
 
 function findFirefox() { return findInList(FIREFOX_CANDIDATES); }
 function findChromium() { return findInList(CHROMIUM_CANDIDATES); }
+
+// Open `arg` (a URL or file) in a specific browser.
+// macOS: `open -a <full path>` is unambiguous for variant browsers (Zen,
+// LibreWolf, etc.) whose canonical app name might not match what `open`
+// expects when given just the human name.
+// Windows/Linux: run the executable directly. Spawned detached rather than
+// via execFile, because a cold-started browser doesn't exit until it's
+// closed and we'd otherwise wait on it for the whole session.
+function openInBrowser(browser, arg) {
+  const { execFile, spawn } = require('child_process');
+  return new Promise((resolve) => {
+    if (IS_MAC) {
+      execFile('open', ['-a', browser.path, arg], (err) => {
+        if (err) resolve({ ok: false, error: err.message });
+        else resolve({ ok: true });
+      });
+      return;
+    }
+    try {
+      const child = spawn(browser.path, [arg], { detached: true, stdio: 'ignore' });
+      child.once('error', (err) => resolve({ ok: false, error: err.message }));
+      child.once('spawn', () => { child.unref(); resolve({ ok: true }); });
+    } catch (err) {
+      resolve({ ok: false, error: err.message });
+    }
+  });
+}
 
 ipcMain.handle('firefox:detect', () => {
   const ff = findFirefox();
@@ -609,44 +706,32 @@ ipcMain.handle('chrome:detect', () => {
 ipcMain.handle('chrome:show-folder', () => {
   const dir = chromeExtensionDir();
   if (!fs.existsSync(dir)) return { ok: false, error: 'Extension folder missing' };
-  // Reveal the folder itself, selected, in a Finder window.
+  // Reveal the folder itself, selected, in Finder / Explorer.
   shell.showItemInFolder(dir);
   return { ok: true };
 });
 
 ipcMain.handle('chrome:open-extensions', async () => {
   const browser = findChromium();
-  if (!browser) return { ok: false, error: 'No Chromium-based browser found in /Applications' };
-  // `open -a <browser> chrome://extensions` works for Chrome, Arc, Brave,
-  // Edge, and Vivaldi — they all interpret chrome:// URLs internally even
-  // when launched from the shell.
-  return new Promise((resolve) => {
-    require('child_process').execFile('open', ['-a', browser.path, 'chrome://extensions'], (err) => {
-      if (err) resolve({ ok: false, error: err.message });
-      else resolve({ ok: true });
-    });
-  });
+  if (!browser) return { ok: false, error: 'No Chromium-based browser found' };
+  // chrome://extensions works for Chrome, Arc, Brave, Edge, and Vivaldi —
+  // they all interpret chrome:// URLs internally even when launched from
+  // the shell.
+  return openInBrowser(browser, 'chrome://extensions');
 });
 
 ipcMain.handle('firefox:install-extension', async () => {
   const ff = findFirefox();
-  if (!ff) return { ok: false, error: 'No Firefox-family browser found in /Applications' };
+  if (!ff) return { ok: false, error: 'No Firefox-family browser found' };
 
   const xpi = path.join(__dirname, 'firefox-extension.xpi');
   if (!fs.existsSync(xpi)) {
     return { ok: false, error: 'Extension XPI not bundled. Run extension/build.sh.' };
   }
 
-  // `open -a <full path>` is unambiguous for variant browsers (Zen, LibreWolf,
-  // etc.) whose canonical app name might not match what `open` expects when
-  // given just the human name. The browser sees the .xpi extension and shows
-  // its install confirmation dialog.
-  return new Promise((resolve) => {
-    require('child_process').execFile('open', ['-a', ff.path, xpi], (err) => {
-      if (err) resolve({ ok: false, error: err.message });
-      else resolve({ ok: true });
-    });
-  });
+  // The browser sees the .xpi extension and shows its install confirmation
+  // dialog.
+  return openInBrowser(ff, xpi);
 });
 
 function normalizeMeetUrl(raw) {
@@ -714,11 +799,19 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: config.window?.width || 1200,
     height: config.window?.height || 800,
-    titleBarStyle: 'hiddenInset',
-    // Push traffic lights down so they sit vertically inside Meet's header
-    // bar (where the hamburger / Meet logo live) instead of floating above
-    // it. y=22 lines them up with the natural center of Meet's top bar.
-    trafficLightPosition: { x: 18, y: 22 },
+    // The inset traffic-light look is macOS-only. Elsewhere, hiding the
+    // title bar removes the close/minimise/maximise buttons entirely, so
+    // keep the native frame and tuck the menu bar behind Alt.
+    ...(IS_MAC
+      ? {
+          titleBarStyle: 'hiddenInset',
+          // Push traffic lights down so they sit vertically inside Meet's header
+          // bar (where the hamburger / Meet logo live) instead of floating above
+          // it. y=22 lines them up with the natural center of Meet's top bar.
+          trafficLightPosition: { x: 18, y: 22 }
+        }
+      : { autoHideMenuBar: true }),
+    icon: IS_MAC ? undefined : path.join(__dirname, 'icon.png'),
     backgroundColor: '#ffffff',
     alwaysOnTop: !!config.window?.alwaysOnTop,
     webPreferences: {
@@ -776,15 +869,24 @@ function createWindow() {
     }
   `;
   mainWindow.webContents.on('dom-ready', () => {
-    mainWindow.webContents.insertCSS(DRAG_REGION_CSS).catch(() => {});
+    // Only needed under the hidden macOS title bar; with a native frame the
+    // strip would just eat clicks on Meet's header.
+    if (IS_MAC) mainWindow.webContents.insertCSS(DRAG_REGION_CSS).catch(() => {});
     mainWindow.webContents.executeJavaScript(MEET_INJECTION).catch(() => {});
   });
 
   mainWindow.on('close', (e) => {
-    if (!app.isQuitting) {
-      e.preventDefault();
-      mainWindow.hide();
+    if (app.isQuitting) return;
+    // Hiding is only safe when something can bring the window back: the Dock
+    // on macOS, the tray icon elsewhere. Without a tray on Windows/Linux a
+    // hidden window is unreachable, so treat close as quit instead.
+    if (!IS_MAC && !tray) {
+      app.isQuitting = true;
+      app.quit();
+      return;
     }
+    e.preventDefault();
+    mainWindow.hide();
   });
 
   mainWindow.on('closed', () => {
@@ -926,13 +1028,16 @@ function buildTrayMenu() {
 
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'trayTemplate.png');
+  // macOS wants a monochrome "Template" image it can tint for the menu bar.
+  // The Windows notification area has no tinting, and a black glyph vanishes
+  // on the dark taskbar, so use the full-colour app icon there.
+  const iconPath = path.join(__dirname, IS_MAC ? 'trayTemplate.png' : 'tray.png');
   if (!fs.existsSync(iconPath)) {
     console.warn('Tray icon missing — run npm run icon to build it');
     return;
   }
   const image = nativeImage.createFromPath(iconPath);
-  image.setTemplateImage(true); // macOS auto-tints for menu bar appearance
+  if (IS_MAC) image.setTemplateImage(true); // macOS auto-tints for menu bar appearance
   tray = new Tray(image);
   tray.setToolTip('MeetLoaf');
   // Left-click toggles the window; right-click (and ctrl-click) opens the menu.
@@ -971,6 +1076,75 @@ function openWelcomeWindow() {
 }
 
 ipcMain.on('welcome:show', () => openWelcomeWindow());
+
+// ─── Screen-share source picker (Windows / Linux) ──────────────────────────
+// macOS delegates this to ScreenCaptureKit's native picker. Everywhere else
+// getDisplayMedia() lands in our handler with no UI, so we show a small modal
+// listing screens and windows. Resolves { id, audio } or null on cancel.
+let pickerWindow = null;
+let pickerResolve = null;
+
+function pickDisplaySource(sources) {
+  // A second share request while the picker is open replaces the first.
+  if (pickerResolve) { pickerResolve(null); pickerResolve = null; }
+  if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.close();
+
+  const payload = {
+    systemAudio: IS_WIN,
+    sources: sources.map((s) => ({
+      id: s.id,
+      name: s.name,
+      kind: s.id.startsWith('screen:') ? 'screen' : 'window',
+      thumbnail: s.thumbnail.isEmpty() ? '' : s.thumbnail.toDataURL(),
+      icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : ''
+    }))
+  };
+
+  return new Promise((resolve) => {
+    pickerResolve = resolve;
+    pickerWindow = new BrowserWindow({
+      width: 760,
+      height: 560,
+      parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      modal: !!(mainWindow && !mainWindow.isDestroyed()),
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      title: 'Share your screen',
+      autoHideMenuBar: true,
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#f5f5f7',
+      webPreferences: {
+        preload: path.join(__dirname, 'picker', 'preload.js'),
+        contextIsolation: true,
+        sandbox: true,
+        nodeIntegration: false
+      }
+    });
+    pickerWindow.setMenuBarVisibility(false);
+    pickerWindow.loadFile(path.join(__dirname, 'picker', 'index.html'));
+    pickerWindow.webContents.once('did-finish-load', () => {
+      if (pickerWindow && !pickerWindow.isDestroyed()) {
+        pickerWindow.webContents.send('picker:sources', payload);
+      }
+    });
+    pickerWindow.on('closed', () => {
+      pickerWindow = null;
+      // Closed without choosing = cancel.
+      if (pickerResolve === resolve) { pickerResolve = null; resolve(null); }
+    });
+  });
+}
+
+ipcMain.on('picker:choose', (_e, choice) => {
+  const resolve = pickerResolve;
+  pickerResolve = null;
+  if (resolve) {
+    resolve(choice && typeof choice.id === 'string'
+      ? { id: choice.id, audio: choice.audio === true }
+      : null);
+  }
+  if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.close();
+});
 
 // Config-location management
 ipcMain.handle('config-path:get', () => ({
@@ -1155,10 +1329,11 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Settings\u2026', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
+        // Hide / Hide Others / Show All are macOS app-menu conventions with
+        // no Windows or Linux equivalent.
+        ...(IS_MAC
+          ? [{ role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }]
+          : []),
         { role: 'quit' }
       ]
     },
@@ -1211,7 +1386,8 @@ const INPUT_CODE_TO_KEY = (() => {
 function accelFromInput(input) {
   const mods = input.modifiers || [];
   const parts = [];
-  if (mods.includes('meta')) parts.push('Cmd');
+  // `meta` is ⌘ on macOS but the Windows/Super key elsewhere.
+  if (mods.includes('meta')) parts.push(IS_MAC ? 'Cmd' : 'Super');
   if (mods.includes('control')) parts.push('Ctrl');
   if (mods.includes('alt')) parts.push('Alt');
   if (mods.includes('shift')) parts.push('Shift');
@@ -1240,18 +1416,19 @@ function registerShortcuts() {
   const s = config.shortcuts || {};
 
   const bind = (entry, fn) => {
-    if (!entry || !entry.accelerator) return;
+    const accel = normalizeAccelerator(entry?.accelerator);
+    if (!accel) return;
     if (entry.global) {
       try {
-        const ok = globalShortcut.register(entry.accelerator, fn);
-        if (!ok) console.warn(`Shortcut unavailable: ${entry.accelerator}`);
+        const ok = globalShortcut.register(accel, fn);
+        if (!ok) console.warn(`Shortcut unavailable: ${accel}`);
       } catch (err) {
-        console.warn(`Failed to register ${entry.accelerator}: ${err.message}`);
+        console.warn(`Failed to register ${accel}: ${err.message}`);
       }
     } else {
       // Last write wins if two local shortcuts share an accelerator —
       // same constraint applies to global ones via the OS.
-      localShortcutMap.set(entry.accelerator, fn);
+      localShortcutMap.set(accel, fn);
     }
   };
 
@@ -1276,7 +1453,14 @@ if (!gotLock) {
     if (deepLink) handleDeepLink(deepLink);
   });
 
-  app.setAsDefaultProtocolClient('meet');
+  // On Windows the registration is a command line. Under `npm start` the
+  // executable is the stock electron.exe, which needs the app path passed
+  // explicitly or a clicked meet:// link launches an empty Electron.
+  if (!IS_MAC && process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('meet', process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient('meet');
+  }
 
   app.on('open-url', (event, url) => {
     event.preventDefault();
@@ -1313,11 +1497,25 @@ if (!gotLock) {
     // wrong". On macOS 14+ the `useSystemPicker: true` flag delegates
     // source selection to ScreenCaptureKit's native picker. The function
     // arg is the fallback for older macOS where we provide our own choice.
+    //
+    // Windows and Linux have no system picker, so there the handler is always
+    // what runs — and blindly taking sources[0] would share the primary
+    // display without asking. Show our own picker instead.
     session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
       try {
-        const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-        if (sources.length) callback({ video: sources[0] });
-        else callback({});
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 320, height: 180 },
+          fetchWindowIcons: true
+        });
+        if (!sources.length) return callback({});
+        if (IS_MAC) return callback({ video: sources[0] });
+        const choice = await pickDisplaySource(sources);
+        if (!choice) return callback({});
+        const video = sources.find((s) => s.id === choice.id);
+        if (!video) return callback({});
+        // 'loopback' (system audio) is only implemented on Windows.
+        callback(IS_WIN && choice.audio ? { video, audio: 'loopback' } : { video });
       } catch (err) {
         console.error('display-media handler error:', err.message);
         callback({});

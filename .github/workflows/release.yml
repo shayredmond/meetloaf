@@ -55,3 +55,47 @@ jobs:
         with:
           name: MeetLoaf-dmg
           path: app/dist/*.dmg
+
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    # Run after the macOS job so only one job creates the GitHub Release;
+    # two jobs racing to create the same release can fail with already_exists.
+    needs: build
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Unsigned: Windows SmartScreen shows "Windows protected your PC" on
+      # first run (More info → Run anyway) — the Windows counterpart of the
+      # macOS quarantine prompt. Add a code-signing cert via CSC_LINK /
+      # CSC_KEY_PASSWORD secrets to remove it.
+      - name: Build installers (x64 + arm64)
+        run: npm run dist:win
+
+      - name: Upload installers as release assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: app/dist/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installers as workflow artifact
+        uses: actions/upload-artifact@v4
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        with:
+          name: MeetLoaf-windows
+          path: app/dist/*.exe
