@@ -77,11 +77,40 @@ jobs:
           cd tap
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # A tap repo created and left empty has no commits, so the clone lands
+          # on an unborn branch with no upstream and a bare `git push` fails.
+          # Naming the branch and pushing it explicitly covers both that case and
+          # an established tap.
+          git branch -M main
+
+          # A first-run tap has no README either, and an empty repo page tells
+          # nobody what this is or how to install from it.
+          if [ ! -f README.md ]; then
+            cat > README.md <<'MD'
+          # Homebrew tap
+
+          ```bash
+          brew install --cask shayredmond/tap/meetloaf --no-quarantine
+          ```
+
+          `--no-quarantine` is required: MeetLoaf is ad-hoc signed rather than
+          notarized, so macOS would otherwise refuse to open it.
+
+          `Casks/meetloaf.rb` is generated — it's written by the release workflow in
+          [shayredmond/meetloaf](https://github.com/shayredmond/meetloaf) from
+          `packaging/homebrew/meetloaf.rb`. Edit it there, not here.
+          MD
+            # The heredoc above is indented to match this block; strip it back out.
+            sed -i 's/^          //' README.md
+            git add README.md
+          fi
+
           git add Casks/meetloaf.rb
           if git diff --cached --quiet; then
             echo "Cask already up to date."
             exit 0
           fi
           git commit -m "meetloaf ${VERSION}"
-          git push
+          git push -u origin main
           echo "::notice::Tap updated to ${VERSION}"
