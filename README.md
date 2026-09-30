@@ -12,19 +12,41 @@ Three pieces:
 
 ## For colleagues: install a pre-built release
 
-If someone else has already run the release pipeline and published a DMG:
+MeetLoaf isn't signed by Apple or Microsoft, so **how you download it decides whether the OS argues with you.** Paste the one-liner for your platform and it won't.
+
+### macOS
 
 ```sh
-# Download + install + strip quarantine attr (so Gatekeeper doesn't block it)
-curl -LO https://github.com/OWNER/REPO/releases/latest/download/MeetLoaf.dmg
+curl -L -o MeetLoaf.dmg https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-mac-arm64.dmg
 hdiutil attach MeetLoaf.dmg
 cp -R /Volumes/MeetLoaf/MeetLoaf.app /Applications/
-xattr -dr com.apple.quarantine /Applications/MeetLoaf.app
 hdiutil detach /Volumes/MeetLoaf
 open -a MeetLoaf
 ```
 
-> **Why `xattr -dr com.apple.quarantine`?** The app is ad-hoc signed, not notarized (no Apple Developer ID). Without this, macOS Gatekeeper will refuse to launch it with a vague "damaged" error on macOS 15+. Stripping the quarantine flag tells macOS "I trust this file." Alternative: right-click → Open once, then System Settings → Privacy & Security → "Open Anyway."
+No `xattr` step, and no Gatekeeper prompt. The quarantine flag that triggers the "MeetLoaf is damaged" error isn't a property of the app — it's added by whatever downloads it, and only apps that opt in (browsers, Slack, Mail) do. `curl` doesn't, so there's nothing to strip.
+
+> **If you downloaded it through a browser instead**, the flag is there and macOS will refuse to open the app. Fix it with:
+> ```sh
+> xattr -dr com.apple.quarantine /Applications/MeetLoaf.app
+> ```
+> Or approve it in **System Settings → Privacy & Security**, where a blocked app shows an **Open Anyway** button shortly after you try to launch it. (Right-click → Open no longer works on macOS 15+; Apple removed that bypass.)
+
+### Windows 10/11
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-Setup.exe -OutFile MeetLoaf-Setup.exe
+.\MeetLoaf-Setup.exe
+```
+
+That installer carries both x64 and Arm64, so there's nothing to choose. It installs per-user — no admin — and registers the `meet://` handler. If you'd rather not download both architectures, `MeetLoaf-Setup-x64.exe` and `MeetLoaf-Setup-arm64.exe` are on the release page and roughly half the size.
+
+Same idea as macOS: SmartScreen's *"Windows protected your PC"* warning is triggered by the Mark-of-the-Web, which browsers attach to downloads and `Invoke-WebRequest` doesn't.
+
+> **If you downloaded it through a browser**, either click **More info → Run anyway**, or strip the mark first:
+> ```powershell
+> Unblock-File .\MeetLoaf-Setup.exe
+> ```
 
 MeetLoaf checks for updates on launch (and from the **MeetLoaf → Check for Updates…** menu). It won't auto-install — it just pings the GitHub Releases API, and if a newer tag exists, offers to open the release page.
 
@@ -34,7 +56,7 @@ Once MeetLoaf is installed, follow **§2 Firefox extension** and **§3 Velja** b
 
 ## Windows
 
-MeetLoaf also runs on Windows 10/11 (x64 and Arm64). Download `MeetLoaf-Setup-<version>-x64.exe` (or `-arm64`) from the latest release and run it — it installs per-user, no admin needed, and registers the `meet://` handler.
+MeetLoaf also runs on Windows 10/11 (x64 and Arm64). Download `MeetLoaf-Setup.exe` from the latest release — it covers both architectures — and run it — it installs per-user, no admin needed, and registers the `meet://` handler. See the install snippet at the top of this README for the download that avoids the SmartScreen warning.
 
 The installer is **unsigned**, so SmartScreen shows *"Windows protected your PC"* on first run: click **More info → Run anyway**. That's the Windows counterpart of the `xattr` step above.
 
@@ -45,7 +67,7 @@ Differences from macOS:
 - **Screen sharing** shows MeetLoaf's own picker (there's no OS picker on Windows), with an option to share system audio.
 - **Link routing:** there's no Velja on Windows. Install the Firefox or Chrome/Edge extension in your default browser (Settings → Routing) — links clicked in Slack, Outlook etc. open in that browser, and the extension hands them to MeetLoaf.
 
-Build locally with `cd app && npm install && npm run dist:win` → `app/dist/MeetLoaf-Setup-<version>-<arch>.exe`. For `npm start` on Windows, run `npm run icon:win` once first so the tray icon exists.
+Build locally with `cd app && npm install && npm run dist:win` → `app/dist/MeetLoaf-Setup-<arch>.exe`. For `npm start` on Windows, run `npm run icon:win` once first so the tray icon exists.
 
 ---
 
@@ -158,7 +180,7 @@ Best path for a permanent install: bundle a signed XPI inside MeetLoaf so collea
    export WEB_EXT_API_SECRET='hex...'
    ./build.sh
    ```
-   This calls `web-ext sign --channel=unlisted` (signed by Mozilla, not listed publicly), then drops the resulting `.xpi` into `app/firefox-extension.xpi`.
+   This calls `web-ext sign --channel=unlisted` (signed by Mozilla, not listed publicly), then drops the resulting `.xpi` into `app/firefox-extension.xpi`. **Commit that file** — see the note below. Bump `version` in `extension/manifest.json` before each re-sign; AMO rejects a version it has already seen for this add-on ID.
 3. Rebuild the desktop app:
    ```sh
    cd ../app && npm run dist
@@ -170,6 +192,10 @@ Best path for a permanent install: bundle a signed XPI inside MeetLoaf so collea
 Open MeetLoaf → **Settings (⌘,) → Routing → Install**. MeetLoaf detects Firefox in `/Applications`, opens the bundled XPI in it, and Firefox shows its standard "Add MeetLoaf Router?" prompt. One click.
 
 Re-sign + redistribute the app whenever the extension code changes — the signed XPI carries a version that has to match what's published.
+
+> **The add-on ID changed** to `meetloaf@shayredmond.github.io`. AMO identifies an add-on by that ID, so this counts as a brand-new add-on: the first `./build.sh` after this creates a fresh unlisted listing, and `app/firefox-extension.xpi` has to be regenerated before the bundled installer works again. Anyone running the old extension keeps it until they install the new one — worth having them remove the old one, or both will try to route the same links.
+
+> **Commit the signed XPI.** `app/firefox-extension.xpi` is tracked on purpose, even though it's a build artifact. CI builds the app from a clean checkout and never runs `extension/build.sh`, so an uncommitted XPI means every published release ships without the extension and **Settings → Routing → Install** reports it as missing. Sign, commit the `.xpi`, then tag.
 
 ### Alternative — temporary load (no signing)
 

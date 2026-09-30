@@ -9,5 +9,9 @@ app/tray.png
 app/tray@2x.png
 app/icon.ico
 extension/web-ext-artifacts/
-app/firefox-extension.xpi
+# app/firefox-extension.xpi is deliberately NOT ignored. It's a signed
+# build artifact, but CI builds the app from a clean checkout and never
+# runs extension/build.sh — so if it isn't committed, every released
+# build ships without the extension and Settings -> Routing -> Install
+# reports it as missing.
 .DS_Store

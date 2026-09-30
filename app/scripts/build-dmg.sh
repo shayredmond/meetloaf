@@ -9,7 +9,11 @@ cd "$(dirname "$0")/.."
 APP_NAME="MeetLoaf"
 DIST_DIR="dist"
 APP_DIR="$DIST_DIR/mac-arm64/$APP_NAME.app"
-DMG_OUT="$DIST_DIR/$APP_NAME-$(node -p "require('./package.json').version").dmg"
+# No version in the filename on purpose: it keeps
+# releases/latest/download/MeetLoaf-mac-arm64.dmg valid forever, so the
+# install snippet in the README never goes stale. The app reports its own
+# version under MeetLoaf → About.
+DMG_OUT="$DIST_DIR/$APP_NAME-mac-arm64.dmg"
 
 # 1. Build icon if missing
 if [[ ! -f icon.icns ]]; then
