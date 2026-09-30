@@ -35,11 +35,11 @@ No `xattr` step, and no Gatekeeper prompt. The quarantine flag that triggers the
 ### Windows 10/11
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-Setup-x64.exe -OutFile MeetLoaf-Setup.exe
+Invoke-WebRequest -Uri https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-Setup.exe -OutFile MeetLoaf-Setup.exe
 .\MeetLoaf-Setup.exe
 ```
 
-Swap `x64` for `arm64` on an Arm device. It installs per-user — no admin — and registers the `meet://` handler.
+That installer carries both x64 and Arm64, so there's nothing to choose. It installs per-user — no admin — and registers the `meet://` handler. If you'd rather not download both architectures, `MeetLoaf-Setup-x64.exe` and `MeetLoaf-Setup-arm64.exe` are on the release page and roughly half the size.
 
 Same idea as macOS: SmartScreen's *"Windows protected your PC"* warning is triggered by the Mark-of-the-Web, which browsers attach to downloads and `Invoke-WebRequest` doesn't.
 
@@ -56,7 +56,7 @@ Once MeetLoaf is installed, follow **§2 Firefox extension** and **§3 Velja** b
 
 ## Windows
 
-MeetLoaf also runs on Windows 10/11 (x64 and Arm64). Download `MeetLoaf-Setup-x64.exe` (or `-arm64`) from the latest release and run it — it installs per-user, no admin needed, and registers the `meet://` handler. See the install snippet at the top of this README for the download that avoids the SmartScreen warning.
+MeetLoaf also runs on Windows 10/11 (x64 and Arm64). Download `MeetLoaf-Setup.exe` from the latest release — it covers both architectures — and run it — it installs per-user, no admin needed, and registers the `meet://` handler. See the install snippet at the top of this README for the download that avoids the SmartScreen warning.
 
 The installer is **unsigned**, so SmartScreen shows *"Windows protected your PC"* on first run: click **More info → Run anyway**. That's the Windows counterpart of the `xattr` step above.
 
