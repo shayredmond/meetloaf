@@ -9,11 +9,20 @@
 // one MV3 mechanism that stops the request before it's sent. Its redirect
 // target can't be a custom scheme like meet://, so it redirects to our own
 // handoff.html, which launches meet:// and then tidies the tab up.
+//
+// Backstop: once Meet has been visited, its service worker can answer the
+// navigation itself, and requests served that way never pass through DNR. So
+// we also watch for a Meet meeting page *committing* in a tab and immediately
+// navigate that tab to the hand-off page, which tears the Meet page down
+// before it can hold on to the camera. onCommitted (not onBeforeNavigate) so
+// it only fires when DNR didn't already catch it.
 
 const RULE_REDIRECT = 1;
 // Per-tab "join in the browser instead" exceptions live in session rules
 // (the only kind that can match on tabIds) with ids offset by this base.
 const TAB_ALLOW_BASE = 100000;
+
+const MEET_URL_RE = /^https?:\/\/meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:[/?#]|$)/i;
 
 function rules() {
   const handoff = chrome.runtime.getURL('handoff.html');
@@ -82,6 +91,7 @@ chrome.action.onClicked.addListener(async () => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'allow-in-tab' || !sender.tab) return;
   const tabId = sender.tab.id;
+  allowTab(tabId);
   chrome.declarativeNetRequest.updateSessionRules({
     removeRuleIds: [TAB_ALLOW_BASE + tabId],
     addRules: [{
@@ -100,4 +110,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [TAB_ALLOW_BASE + tabId] }).catch(() => {});
+  disallowTab(tabId);
 });
+
+// Tabs the user chose to "join in the browser". Kept in storage.session so it
+// survives the service worker being suspended, but not a browser restart.
+async function allowedTabs() {
+  const r = await chrome.storage.session.get('allowedTabs');
+  return new Set(r.allowedTabs || []);
+}
+async function allowTab(tabId) {
+  const set = await allowedTabs();
+  set.add(tabId);
+  await chrome.storage.session.set({ allowedTabs: [...set] });
+}
+async function disallowTab(tabId) {
+  const set = await allowedTabs();
+  if (set.delete(tabId)) await chrome.storage.session.set({ allowedTabs: [...set] });
+}
+
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+  if (details.frameId !== 0) return;
+  const match = details.url.match(MEET_URL_RE);
+  if (!match) return;
+  if (!(await getEnabled())) return;
+  if ((await allowedTabs()).has(details.tabId)) return;
+  const code = match[1].toLowerCase();
+  console.log('[meetloaf] Meet page loaded despite the redirect rule (service worker?) — handing off', code);
+  chrome.tabs.update(details.tabId, {
+    // via=commit: the Meet page is already in this tab's history, so the
+    // hand-off page has to step back over it too.
+    url: chrome.runtime.getURL('handoff.html') + '?via=commit#' + code
+  }).catch(() => {});
+}, { url: [{ hostEquals: 'meet.google.com' }] });

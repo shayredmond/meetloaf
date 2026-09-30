@@ -16,11 +16,16 @@ function launch() {
   location.href = `meet://meet.google.com/${code}`;
 }
 
+// Reached via the backstop in background.js: the Meet page loaded first and
+// sits one entry behind us in history, so stepping back one would reload it.
+const VIA_COMMIT = new URLSearchParams(location.search).get('via') === 'commit';
+
 // Opened just for this link (new tab / middle-click) → close it. Clicked
 // from another page in the same tab → go back to that page.
 async function tidyUp() {
-  if (history.length > 1) {
-    history.back();
+  const skip = VIA_COMMIT ? 2 : 1;
+  if (history.length > skip) {
+    history.go(-skip);
     return;
   }
   const tab = await chrome.tabs.getCurrent();
