@@ -33,7 +33,22 @@ const CODE_MAP = (() => {
   return m;
 })();
 
-// Pretty-print an accelerator string for display (⌘⇧M style).
+const IS_MAC = window.meetloaf.platform === 'darwin';
+
+// Pretty-print an accelerator string for display: ⌘⇧M style on macOS,
+// Ctrl+Shift+M elsewhere (where ⌘/⌥ glyphs mean nothing). Cmd tokens show
+// as Ctrl off-Mac, matching how main.js normalises them for registration.
+const PRETTY_OTHER = {
+  Cmd: 'Ctrl', Command: 'Ctrl', CmdOrCtrl: 'Ctrl', CommandOrControl: 'Ctrl',
+  Super: 'Win', Meta: 'Win', Control: 'Ctrl', Option: 'Alt',
+  Backquote: '`', Minus: '-', Equal: '=',
+  BracketLeft: '[', BracketRight: ']',
+  Backslash: '\\', Semicolon: ';', Quote: "'",
+  Comma: ',', Period: '.', Slash: '/',
+  Esc: 'Escape', Return: 'Enter',
+  Up: '↑', Down: '↓', Left: '←', Right: '→'
+};
+
 const PRETTY = {
   Cmd: '⌘', Command: '⌘', CmdOrCtrl: '⌘', CommandOrControl: '⌘',
   Super: '⌘', Meta: '⌘',
@@ -55,12 +70,14 @@ const PRETTY = {
 
 function prettyAccelerator(accel) {
   if (!accel) return '';
+  if (!IS_MAC) return accel.split('+').map((p) => PRETTY_OTHER[p] || p).join('+');
   return accel.split('+').map((p) => PRETTY[p] || p).join('');
 }
 
 function buildAcceleratorFromEvent(e) {
   const parts = [];
-  if (e.metaKey) parts.push('Cmd');
+  // metaKey is ⌘ on macOS but the Windows key elsewhere.
+  if (e.metaKey) parts.push(IS_MAC ? 'Cmd' : 'Super');
   if (e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
   if (e.shiftKey) parts.push('Shift');
@@ -293,7 +310,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const chromiumNote = info.chromium
           ? ` (${info.chromium.name} detected — Chromium-based browsers can't install Firefox extensions)`
           : '';
-        firefoxStatus.textContent = `No Firefox-family browser found in /Applications${chromiumNote}`;
+        firefoxStatus.textContent = `No Firefox-family browser found${chromiumNote}`;
         installFirefoxBtn.hidden = true;
         return;
       }
@@ -328,7 +345,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function refreshChromeStatus() {
       const info = await window.meetloaf.detectChrome();
       if (!info.chromium) {
-        chromeStatus.textContent = 'No Chromium-based browser found in /Applications';
+        chromeStatus.textContent = 'No Chromium-based browser found';
         showChromeFolderBtn.hidden = true;
         openChromeExtensionsBtn.hidden = true;
         chromeInstructions.hidden = true;

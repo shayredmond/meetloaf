@@ -32,6 +32,23 @@ Once MeetLoaf is installed, follow **§2 Firefox extension** and **§3 Velja** b
 
 ---
 
+## Windows
+
+MeetLoaf also runs on Windows 10/11 (x64 and Arm64). Download `MeetLoaf-Setup-<version>-x64.exe` (or `-arm64`) from the latest release and run it — it installs per-user, no admin needed, and registers the `meet://` handler.
+
+The installer is **unsigned**, so SmartScreen shows *"Windows protected your PC"* on first run: click **More info → Run anyway**. That's the Windows counterpart of the `xattr` step above.
+
+Differences from macOS:
+
+- **Shortcuts** use Ctrl where macOS uses ⌘. Configs synced from a Mac keep working — `Cmd+…` bindings are read as `Ctrl+…` on Windows.
+- **Tray icon** lives in the notification area (left-click toggles the window, right-click for the menu). Closing the window hides it there; quit from the tray menu.
+- **Screen sharing** shows MeetLoaf's own picker (there's no OS picker on Windows), with an option to share system audio.
+- **Link routing:** there's no Velja on Windows. Install the Firefox or Chrome/Edge extension in your default browser (Settings → Routing) — links clicked in Slack, Outlook etc. open in that browser, and the extension hands them to MeetLoaf.
+
+Build locally with `cd app && npm install && npm run dist:win` → `app/dist/MeetLoaf-Setup-<version>-<arch>.exe`. For `npm start` on Windows, run `npm run icon:win` once first so the tray icon exists.
+
+---
+
 ## For you (developer): build and publish
 
 ### Prereqs
