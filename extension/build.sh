@@ -8,8 +8,11 @@
 #        export WEB_EXT_API_KEY='user:1234567:89'
 #        export WEB_EXT_API_SECRET='hex...'
 #
-# Run this whenever the extension code changes — the signed .xpi is committed
-# alongside the app bundle so colleagues get a one-click install.
+# Run this whenever the extension code changes, then COMMIT the resulting
+# app/firefox-extension.xpi. CI builds the app from a clean checkout and never
+# runs this script, so an uncommitted XPI means every release ships without the
+# extension. Bump "version" in manifest.json first — AMO rejects a re-upload of
+# a version it has already seen for this add-on ID.
 set -euo pipefail
 
 cd "$(dirname "$0")"
