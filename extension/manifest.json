@@ -5,7 +5,7 @@
   "description": "Opens Google Meet links in the MeetLoaf desktop app.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "meetloaf@nabucasa.com",
+      "id": "meetloaf@shayredmond.github.io",
       "strict_min_version": "115.0"
     }
   },

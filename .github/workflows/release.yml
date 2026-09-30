@@ -38,7 +38,13 @@ jobs:
             name: Windows (x64 + arm64 installers)
             build: npm run dist:win
             artifact: MeetLoaf-windows
-            path: app/dist/*.exe
+            # NSIS writes its uninstaller stubs into dist/ alongside the real
+            # installers. Without the exclusion they ride along into the
+            # release, where MeetLoaf-Setup-x64.__uninstaller.exe sitting next
+            # to MeetLoaf-Setup-x64.exe is an invitation to run the wrong one.
+            path: |
+              app/dist/*.exe
+              !app/dist/*__uninstaller*.exe
     defaults:
       run:
         working-directory: app
