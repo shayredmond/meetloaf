@@ -180,7 +180,7 @@ Best path for a permanent install: bundle a signed XPI inside MeetLoaf so collea
    export WEB_EXT_API_SECRET='hex...'
    ./build.sh
    ```
-   This calls `web-ext sign --channel=unlisted` (signed by Mozilla, not listed publicly), then drops the resulting `.xpi` into `app/firefox-extension.xpi`.
+   This calls `web-ext sign --channel=unlisted` (signed by Mozilla, not listed publicly), then drops the resulting `.xpi` into `app/firefox-extension.xpi`. **Commit that file** — see the note below. Bump `version` in `extension/manifest.json` before each re-sign; AMO rejects a version it has already seen for this add-on ID.
 3. Rebuild the desktop app:
    ```sh
    cd ../app && npm run dist
@@ -194,6 +194,8 @@ Open MeetLoaf → **Settings (⌘,) → Routing → Install**. MeetLoaf detects 
 Re-sign + redistribute the app whenever the extension code changes — the signed XPI carries a version that has to match what's published.
 
 > **The add-on ID changed** to `meetloaf@shayredmond.github.io`. AMO identifies an add-on by that ID, so this counts as a brand-new add-on: the first `./build.sh` after this creates a fresh unlisted listing, and `app/firefox-extension.xpi` has to be regenerated before the bundled installer works again. Anyone running the old extension keeps it until they install the new one — worth having them remove the old one, or both will try to route the same links.
+
+> **Commit the signed XPI.** `app/firefox-extension.xpi` is tracked on purpose, even though it's a build artifact. CI builds the app from a clean checkout and never runs `extension/build.sh`, so an uncommitted XPI means every published release ships without the extension and **Settings → Routing → Install** reports it as missing. Sign, commit the `.xpi`, then tag.
 
 ### Alternative — temporary load (no signing)
 
