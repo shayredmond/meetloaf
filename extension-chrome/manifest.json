@@ -1,14 +1,34 @@
 {
   "manifest_version": 3,
   "name": "MeetLoaf Router",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "description": "Opens Google Meet links in the MeetLoaf desktop app.",
-  "permissions": ["webNavigation", "tabs", "storage"],
-  "host_permissions": ["*://meet.google.com/*"],
+  "permissions": [
+    "declarativeNetRequest",
+    "webNavigation",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://meet.google.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
     "default_title": "MeetLoaf Router (enabled)"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "handoff.html",
+        "handoff.js",
+        "handoff.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ],
+      "use_dynamic_url": true
+    }
+  ]
 }
