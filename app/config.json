@@ -25,8 +25,7 @@
   "window": {
     "width": 1200,
     "height": 800,
-    "alwaysOnTop": false,
-    "popOutPresentation": true
+    "alwaysOnTop": false
   },
   "homeAssistant": {
     "enabled": false,
