@@ -178,6 +178,262 @@
     );
   }
 
+  // ─── Presentation pop-out ───────────────────────────────────────────────
+  //
+  // When a *remote* participant starts presenting, split their shared content
+  // out into its own window, so the main window can go back to being the
+  // faces. The stream is never re-captured or mirrored: a window opened with
+  // window.open() from this page is same-origin and lives in the same
+  // renderer, so a <video> inside it can be handed Meet's own MediaStream by
+  // reference. That is the whole trick, and it is what makes this possible at
+  // all — Electron has no usable Picture-in-Picture path on macOS.
+  //
+  // presentationTick() is deliberately driven from outside, by two callers:
+  // the MutationObserver below (immediate, but throttled to a crawl whenever
+  // MeetLoaf is hidden) and the main process's own unthrottled poll. It is
+  // idempotent, and its close hysteresis is measured in wall-clock time rather
+  // than tick counts so that both callers produce identical behaviour.
+
+  // Our own camera and our own screen share must never be mistaken for someone
+  // else's presentation. Recording the track ids where they're created is
+  // exact; any DOM-side "is this the self-view?" test would only be a guess.
+  const localTrackIds = new Set();
+
+  function rememberLocalTracks(stream) {
+    try {
+      for (const track of stream.getVideoTracks()) localTrackIds.add(track.id);
+    } catch { /* not a MediaStream — hand it back untouched */ }
+    return stream;
+  }
+
+  function patchCapture(name) {
+    const md = navigator.mediaDevices;
+    if (!md || typeof md[name] !== 'function') return;
+    const original = md[name].bind(md);
+    md[name] = function (...args) {
+      return original(...args).then(rememberLocalTracks);
+    };
+  }
+  patchCapture('getUserMedia');
+  patchCapture('getDisplayMedia');
+
+  // Meet's own wording decides *whether* a presentation is running; the
+  // scoring below decides *which* element it is. Splitting the question this
+  // way means a missed label can only cost us the feature, never pop out a
+  // random participant's camera.
+  const PRESENTING_RE = /\bis presenting\b|\bpresentation\b/i;
+  const SELF_PRESENTING_RE = /\byou are presenting\b|\byour presentation\b/i;
+
+  function remotePresentationAnnounced() {
+    for (const el of document.querySelectorAll('[aria-label], [role="heading"]')) {
+      const text = (el.getAttribute('aria-label') || el.textContent || '').trim();
+      // Long strings are wrapper subtrees whose concatenated text matches
+      // almost anything — the same trap controlLabels() guards against.
+      if (!text || text.length > 80) continue;
+      if (SELF_PRESENTING_RE.test(text)) continue;
+      if (PRESENTING_RE.test(text)) return true;
+    }
+    return false;
+  }
+
+  function isLocalVideo(v) {
+    const stream = v.srcObject;
+    if (!stream || typeof stream.getVideoTracks !== 'function') return false;
+    return stream.getVideoTracks().some((t) => localTrackIds.has(t.id));
+  }
+
+  function candidateVideos() {
+    return Array.from(document.querySelectorAll('video')).filter(
+      (v) => v.srcObject && v.videoWidth > 0 && v.videoHeight > 0 && !isLocalVideo(v)
+    );
+  }
+
+  // No single property says "this is a screen share", but several independent
+  // ones line up on it. object-fit carries the most weight because it isn't
+  // cosmetic: shared content has to be letterboxed rather than cropped, so
+  // Meet is forced to render it with `contain` where camera tiles use `cover`.
+  function scorePresentation(v) {
+    let score = 0;
+    try {
+      if (getComputedStyle(v).objectFit === 'contain') score += 3;
+    } catch { /* element detached mid-scan */ }
+    const area = v.videoWidth * v.videoHeight;
+    if (area >= 1280 * 720) score += 2;
+    else if (area >= 1024 * 576) score += 1;
+    // Camera tiles are 16:9 essentially without exception. A shared display
+    // frequently isn't — 16:10 laptops, portrait monitors, single windows.
+    if (Math.abs(v.videoWidth / v.videoHeight - 16 / 9) > 0.08) score += 1;
+    return score;
+  }
+
+  function renderedArea(v) {
+    const r = v.getBoundingClientRect();
+    return Math.max(0, r.width) * Math.max(0, r.height);
+  }
+
+  function bestCandidate() {
+    const all = candidateVideos();
+    let video = null;
+    let score = -1;
+    for (const v of all) {
+      const s = scorePresentation(v);
+      // Rendered size breaks ties: between two equally screen-shaped videos,
+      // the one Meet gave the stage to is the one being presented.
+      if (s > score || (s === score && video && renderedArea(v) > renderedArea(video))) {
+        video = v;
+        score = s;
+      }
+    }
+    return { video, score, all };
+  }
+
+  // The gate that stops a merely large camera tile from being mistaken for a
+  // share. A presentation is one of two things, and both are consequences of
+  // how Meet has to lay it out rather than cosmetic choices: either it is
+  // visibly uncropped (shared content must be letterboxed; camera tiles are
+  // cropped to fill their tile), or it is visibly the main stage (Meet demotes
+  // the cameras to a strip while someone presents). Requiring one of the two
+  // means a change to either behaviour costs us detection, never a false pop-out.
+  function qualifies(video, all) {
+    try {
+      if (getComputedStyle(video).objectFit === 'contain') return true;
+    } catch { /* element detached mid-scan */ }
+    const mine = renderedArea(video);
+    if (mine <= 0) return false;
+    const rival = Math.max(0, ...all.filter((v) => v !== video).map(renderedArea));
+    return mine >= rival * 2;
+  }
+
+  // With Meet announcing a presentation, qualifies() is doing the real work and
+  // the score only has to show some evidence. Without the announcement we act
+  // only on a video that looks unmistakably like shared content — that path
+  // exists so the feature survives Meet changing its wording.
+  const SCORE_ANNOUNCED = 2;
+  const SCORE_UNANNOUNCED = 4;
+
+  function presentationVideo() {
+    const { video, score, all } = bestCandidate();
+    if (!video || !qualifies(video, all)) return null;
+    const floor = remotePresentationAnnounced() ? SCORE_ANNOUNCED : SCORE_UNANNOUNCED;
+    return score >= floor ? video : null;
+  }
+
+  const POPOUT_NAME = 'meetloaf-presentation';
+  // How long the presentation has to stay gone before the window closes. Meet
+  // tears down and rebuilds video elements during layout changes, so brief
+  // gaps are normal and must not make the window flap.
+  const POPOUT_CLOSE_GRACE_MS = 5000;
+
+  const POPOUT_DOC = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Presentation</title>
+<meta name="color-scheme" content="dark">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+</style></head>
+<body><video id="meetloaf-presentation" autoplay playsinline muted></video></body></html>`;
+
+  let popout = null;
+  let popoutVideo = null;
+  // Set when the user closes the window by hand. Cleared once the presentation
+  // ends, so dismissing it applies to this presentation only.
+  let popoutDismissed = false;
+  let lastSeenAt = 0;
+
+  function openPopout() {
+    if (popout && !popout.closed) return true;
+    popout = window.open('', POPOUT_NAME, 'width=1024,height=640');
+    if (!popout) {
+      log('pop-out window was blocked');
+      return false;
+    }
+    popout.document.open();
+    popout.document.write(POPOUT_DOC);
+    popout.document.close();
+    popoutVideo = popout.document.getElementById('meetloaf-presentation');
+    log('presentation popped out');
+    return true;
+  }
+
+  function closePopout(reason) {
+    if (popout && !popout.closed) {
+      log('closing pop-out:', reason);
+      popout.close();
+    }
+    popout = null;
+    popoutVideo = null;
+  }
+
+  // Assigning the same MediaStream to a second <video> is fine, and it works
+  // across windows because about:blank inherits the opener's origin. Re-run on
+  // every tick: Meet swaps the underlying element and stream freely, and this
+  // no-ops when nothing changed.
+  function attach(stream) {
+    if (!popoutVideo || !stream || popoutVideo.srcObject === stream) return;
+    popoutVideo.srcObject = stream;
+    const played = popoutVideo.play();
+    if (played && typeof played.catch === 'function') played.catch(() => {});
+  }
+
+  function presentationTick(enabled) {
+    const video = enabled ? presentationVideo() : null;
+    const now = Date.now();
+
+    if (video) {
+      lastSeenAt = now;
+      if (popoutDismissed) return true;
+      if (popout && popout.closed) {
+        // Closed from its own title bar while the presentation is still
+        // running: that's "not this one, thanks", not an invitation to
+        // reopen on the next tick.
+        popoutDismissed = true;
+        popout = null;
+        popoutVideo = null;
+        return true;
+      }
+      if (openPopout()) attach(video.srcObject);
+      return true;
+    }
+
+    popoutDismissed = false;
+    if (popout && now - lastSeenAt > POPOUT_CLOSE_GRACE_MS) closePopout('presentation ended');
+    return false;
+  }
+
+  // Called by the main process on its unthrottled poll, and locally below.
+  window.__meetloafPresentationTick = presentationTick;
+
+  // Manual override for the View menu. `open` deliberately ignores the score
+  // threshold and takes the best candidate outright — it's the escape hatch
+  // for exactly the case where auto-detection didn't fire.
+  window.__meetloafPopout = {
+    isOpen: () => !!(popout && !popout.closed),
+    open: () => {
+      const { video } = bestCandidate();
+      if (!video) {
+        log('pop-out requested but no remote video is playing');
+        return false;
+      }
+      popoutDismissed = false;
+      lastSeenAt = Date.now();
+      if (!openPopout()) return false;
+      attach(video.srcObject);
+      return true;
+    },
+    close: () => {
+      popoutDismissed = true;
+      closePopout('manual');
+    },
+    // Main destroyed the window itself (the call ended, or the renderer is
+    // being replaced). Drop our handle without recording it as a dismissal —
+    // that flag is reserved for the user closing the window by hand.
+    reset: () => {
+      popout = null;
+      popoutVideo = null;
+      popoutDismissed = false;
+    }
+  };
+
   let raf = null;
   function schedule() {
     if (raf) return;
@@ -185,6 +441,13 @@
       raf = null;
       try { inject(); } catch (err) { log('inject error', err); }
       try { reportCallPhase(); } catch (err) { log('call-phase error', err); }
+      // Only ever *maintains* an already-open window here: opening is gated on
+      // the user's setting, which only the main process knows, so main's poll
+      // is what opens one. This keeps the attached stream fresh and closes the
+      // window promptly while MeetLoaf is visible.
+      try {
+        if (window.__meetloafPopout.isOpen()) presentationTick(true);
+      } catch (err) { log('pop-out error', err); }
     });
   }
   new MutationObserver(schedule).observe(document.documentElement, {
