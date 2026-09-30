@@ -1,6 +1,6 @@
 {
   "name": "meetloaf",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Standalone Google Meet app for macOS and Windows",
   "main": "main.js",
   "author": "Shay Redmond",
