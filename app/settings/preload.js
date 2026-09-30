@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('meetloaf', {
+  platform: process.platform,
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (next) => ipcRenderer.invoke('config:save', next),
   recordingStart: () => ipcRenderer.send('recording:start'),
