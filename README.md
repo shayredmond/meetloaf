@@ -293,7 +293,9 @@ Configure it in **Settings → Home Assistant**.
 
 ### What counts as "joined"
 
-By default, **reaching the waiting room** — the pre-join screen where you pick your camera and mic. That's deliberate: these automations are usually *preparation* (camera on, lights up, mic switched over), so they have to have run by the time you're configuring devices, not after.
+By default, **the earliest point MeetLoaf can tell you're in a meeting**. Usually that's reaching the waiting room — the pre-join screen where you pick your camera and mic. That's deliberate: these automations are usually *preparation* (camera on, lights up, mic switched over), so they have to have run by the time you're configuring devices, not after.
+
+Where there's no waiting room, it fires on connection instead. Starting a meeting with the **New** button or a `meet://new` link drops you straight into the call, and the join still fires — just at the moment you connect rather than a few seconds earlier. You lose the head start, never the event.
 
 The meeting code alone can't tell these apart — it's in the URL for every screen — so MeetLoaf reads Meet's own controls and distinguishes three phases:
 
@@ -307,7 +309,7 @@ That third row is the one that matters most: after you hang up, Meet leaves you 
 
 Anything MeetLoaf doesn't recognise counts as *not* in a meeting. That direction is chosen on purpose — if Meet renames a label, the worst case is an automation that doesn't fire, never a camera or light left on indefinitely.
 
-**Fire "join" when** in Settings switches between `Waiting room` (default) and `Connected`. Pick `Connected` for something that shouldn't announce you early, like an on-air sign.
+**Fire "join" when** in Settings switches between `Waiting room` (default) and `Connected only`. The two aren't alternatives so much as a floor: `Waiting room` means *waiting room or connection, whichever comes first*, while `Connected only` suppresses the waiting-room case entirely. Pick `Connected only` for something that shouldn't announce you early, like an on-air sign.
 
 Leave also fires on navigating away from the meeting, on a renderer crash, and on quitting MeetLoaf mid-call. A phase change has to hold briefly before it commits (400ms entering, 2s leaving) so Meet's DOM churn during a reconnect can't run your automations twice.
 
@@ -384,7 +386,9 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 - **Firefox extension doesn't redirect:** confirm it's enabled (toolbar icon has no "off" badge); confirm `about:config` → `network.protocol-handler.external.meet` is `true`.
 - **Firefox "Launch Application" dialog every link:** tick "Remember my choice" the first time.
 - **Velja doesn't see MeetLoaf:** MeetLoaf has to be in `/Applications` and launched at least once for Velja to find it.
+- **Home Assistant automation never fires, but MeetLoaf says it sent:** check the automation's own *conditions* before suspecting MeetLoaf. In Home Assistant, open the automation → **Traces**; `execution: failed_conditions` means the webhook arrived and your automation stopped itself. A gate like "only when I'm in the room" will do this silently.
 - **Home Assistant automation never fires:** hit **Test** in Settings → Home Assistant — it reports the real HTTP status. `404` on a webhook means the ID is wrong or the automation was deleted; `401`/`403` in service-call mode means the token is bad. Also check the integration is actually **Enabled**.
+- **Home Assistant fires late, at connection instead of the waiting room:** that meeting had no waiting room — starting one with **New** or `meet://new` goes straight in. The event still fires; only the head start is lost.
 - **Home Assistant doesn't fire at the waiting room:** check **Fire "join" when** is set to `Waiting room`. If it still doesn't, Meet has probably renamed the pre-join button — open DevTools (View → Toggle Developer Tools) and look for `[meetloaf] phase:` lines. `unknown` where you expected `lobby` means the label changed; the patterns are at the top of the call-phase watcher in `app/main-inject.js`.
 - **Something stays switched on after I hang up:** MeetLoaf should read Meet's post-hangup screen as `post_call` and fire leave. Check DevTools for `[meetloaf] phase: post_call`; if it says `unknown`, the *Rejoin* / *Return to home screen* labels changed.
 - **Update checker never prompts:** confirm `repository.url` in `app/package.json` points to a real GitHub repo (not `OWNER/REPO`).

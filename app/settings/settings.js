@@ -436,8 +436,8 @@ const HA_DEFAULTS = {
 };
 
 const HA_JOINON_COPY = {
-  lobby: 'As soon as the pre-join screen opens, so camera and lights are already set up while you pick your devices.',
-  connected: 'Only once you are actually admitted and connected to the call.'
+  lobby: 'At the earliest moment MeetLoaf can tell you are in a meeting: the pre-join screen, so lights and camera are already set up while you pick your devices — or connection itself, when there is no pre-join screen. Starting a meeting from the New button or a meet://new link goes straight in.',
+  connected: 'Only once you are actually admitted and connected. Nothing fires at the pre-join screen.'
 };
 
 const HA_COPY = {
