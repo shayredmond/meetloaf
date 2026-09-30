@@ -221,25 +221,66 @@
   // scoring below decides *which* element it is. Splitting the question this
   // way means a missed label can only cost us the feature, never pop out a
   // random participant's camera.
-  const PRESENTING_RE = /\bis presenting\b|\bpresentation\b/i;
+  // "presentation" as a bare noun is all over Meet's chrome — layout options,
+  // the Present now flyout, tooltips, hidden pre-rendered dialogs — so matching
+  // it meant the announcement was effectively always true. Only the phrasing
+  // Meet uses to announce an actual presenter counts.
+  const PRESENTING_RE = /\bis presenting\b|\b\S+['\u2019]s presentation\b/i;
   const SELF_PRESENTING_RE = /\byou are presenting\b|\byour presentation\b/i;
 
-  function remotePresentationAnnounced() {
+  function isVisible(el) {
+    try {
+      if (typeof el.checkVisibility === 'function') return el.checkVisibility();
+      return !!el.offsetParent;
+    } catch {
+      return false;
+    }
+  }
+
+  // Returns the matching strings rather than a boolean so the debug dump can
+  // show exactly what tripped it.
+  function announcementMatches() {
+    const hits = [];
     for (const el of document.querySelectorAll('[aria-label], [role="heading"]')) {
       const text = (el.getAttribute('aria-label') || el.textContent || '').trim();
       // Long strings are wrapper subtrees whose concatenated text matches
       // almost anything — the same trap controlLabels() guards against.
       if (!text || text.length > 80) continue;
       if (SELF_PRESENTING_RE.test(text)) continue;
-      if (PRESENTING_RE.test(text)) return true;
+      if (!PRESENTING_RE.test(text)) continue;
+      // Meet pre-renders plenty of UI it isn't showing yet.
+      if (!isVisible(el)) continue;
+      hits.push(text);
     }
-    return false;
+    return hits;
   }
 
-  function isLocalVideo(v) {
+  function remotePresentationAnnounced() {
+    return announcementMatches().length > 0;
+  }
+
+  function hasLocalTrack(v) {
     const stream = v.srcObject;
     if (!stream || typeof stream.getVideoTracks !== 'function') return false;
     return stream.getVideoTracks().some((t) => localTrackIds.has(t.id));
+  }
+
+  // Meet mirrors your own camera, and only your own camera. Unlike the track-id
+  // check this doesn't depend on our getUserMedia patch having been installed
+  // before Meet took its reference to it — a race we can't be sure of winning,
+  // since we're injected at dom-ready and Meet's bundle may have run already.
+  function isMirrored(v) {
+    try {
+      const t = getComputedStyle(v).transform;
+      if (!t || t === 'none') return false;
+      return new DOMMatrixReadOnly(t).a < 0;
+    } catch {
+      return false;
+    }
+  }
+
+  function isLocalVideo(v) {
+    return hasLocalTrack(v) || isMirrored(v);
   }
 
   function candidateVideos() {
@@ -300,15 +341,21 @@
     } catch { /* element detached mid-scan */ }
     const mine = renderedArea(video);
     if (mine <= 0) return false;
-    const rival = Math.max(0, ...all.filter((v) => v !== video).map(renderedArea));
-    return mine >= rival * 2;
+    const rivals = all.filter((v) => v !== video).map(renderedArea).filter((a) => a > 0);
+    // "Twice the size of every other tile" is vacuously true when there is no
+    // other tile — which is exactly the state on joining a call, and is what
+    // popped a window open with nobody sharing. Dominance needs something to
+    // dominate; with a lone video the object-fit test above is the only way in.
+    if (!rivals.length) return false;
+    return mine >= Math.max(...rivals) * 2;
   }
 
-  // With Meet announcing a presentation, qualifies() is doing the real work and
-  // the score only has to show some evidence. Without the announcement we act
-  // only on a video that looks unmistakably like shared content — that path
-  // exists so the feature survives Meet changing its wording.
-  const SCORE_ANNOUNCED = 2;
+  // qualifies() is the real discriminator, so an announced presentation only
+  // needs the score to show a flicker of evidence. Unannounced, we act solely
+  // on a video that looks unmistakably like shared content — that path exists
+  // so the feature survives Meet changing its wording. The announced floor is
+  // above a plain 720p camera tile (which scores 2) on purpose.
+  const SCORE_ANNOUNCED = 3;
   const SCORE_UNANNOUNCED = 4;
 
   function presentationVideo() {
@@ -391,7 +438,12 @@
         popoutVideo = null;
         return true;
       }
-      if (openPopout()) attach(video.srcObject);
+      if (openPopout()) {
+        // Leave the reasoning in the console: a wrong pop-out should be
+        // diagnosable after the fact, without having to reproduce it live.
+        log('popped out on:', describeVideo(video), 'announced:', announcementMatches());
+        attach(video.srcObject);
+      }
       return true;
     }
 
@@ -399,6 +451,73 @@
     if (popout && now - lastSeenAt > POPOUT_CLOSE_GRACE_MS) closePopout('presentation ended');
     return false;
   }
+
+  // ─── Diagnostics ────────────────────────────────────────────────────────
+  //
+  // Every detection signal, for every video on the page, in one object. Run
+  // __meetloafPresentationDebug() from DevTools during a call — once with
+  // nobody presenting and once while someone is — and the difference between
+  // the two dumps is the answer to "what should the detector key on?".
+
+  // Meet's class names are obfuscated and rotate, but its data-* attributes and
+  // aria-labels don't. If there's a stable "this tile is a presentation" marker
+  // anywhere in the markup, this is what will surface it.
+  function ancestryOf(v) {
+    const out = [];
+    let el = v;
+    for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
+      const attrs = {};
+      for (const a of Array.from(el.attributes || [])) {
+        if (a.name.startsWith('data-') || a.name.startsWith('aria-') || a.name === 'role') {
+          attrs[a.name] = a.value.slice(0, 60);
+        }
+      }
+      out.push({ tag: el.tagName.toLowerCase(), attrs });
+    }
+    return out;
+  }
+
+  function describeVideo(v) {
+    const rect = v.getBoundingClientRect();
+    let objectFit = '?';
+    try { objectFit = getComputedStyle(v).objectFit; } catch { /* detached */ }
+    const stream = v.srcObject;
+    const tracks = stream && typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : [];
+    return {
+      intrinsic: `${v.videoWidth}x${v.videoHeight}`,
+      rendered: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
+      objectFit,
+      mirrored: isMirrored(v),
+      knownLocalTrack: hasLocalTrack(v),
+      paused: v.paused,
+      score: scorePresentation(v),
+      tracks: tracks.map((t) => ({
+        label: t.label,
+        readyState: t.readyState,
+        settings: (() => { try { return t.getSettings(); } catch { return null; } })()
+      })),
+      ancestry: ancestryOf(v)
+    };
+  }
+
+  function presentationDebug() {
+    const all = Array.from(document.querySelectorAll('video'));
+    const candidates = candidateVideos();
+    const { video, score } = bestCandidate();
+    return {
+      announced: remotePresentationAnnounced(),
+      announcementMatches: announcementMatches(),
+      detected: !!presentationVideo(),
+      bestScore: score,
+      bestQualifies: video ? qualifies(video, candidates) : false,
+      floor: remotePresentationAnnounced() ? SCORE_ANNOUNCED : SCORE_UNANNOUNCED,
+      localTrackIdsKnown: localTrackIds.size,
+      candidates: candidates.map(describeVideo),
+      excludedAsLocalOrEmpty: all.filter((v) => !candidates.includes(v)).map(describeVideo)
+    };
+  }
+
+  window.__meetloafPresentationDebug = presentationDebug;
 
   // Called by the main process on its unthrottled poll, and locally below.
   window.__meetloafPresentationTick = presentationTick;
