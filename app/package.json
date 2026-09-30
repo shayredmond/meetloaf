@@ -57,7 +57,7 @@
           ]
         }
       ],
-      "icon": "icon.png",
+      "icon": "icon.ico",
       "protocols": [
         {
           "name": "Google Meet",
@@ -88,7 +88,6 @@
       "package.json",
       "picker/**",
       "settings/**",
-      "mini/**",
       "welcome/**"
     ],
     "extraResources": [

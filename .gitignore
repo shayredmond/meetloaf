@@ -7,6 +7,7 @@ app/trayTemplate@2x.png
 app/icon.png
 app/tray.png
 app/tray@2x.png
+app/icon.ico
 extension/web-ext-artifacts/
 app/firefox-extension.xpi
 .DS_Store
