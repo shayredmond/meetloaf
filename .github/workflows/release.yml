@@ -38,12 +38,17 @@ jobs:
             name: Windows (x64 + arm64 installers)
             build: npm run dist:win
             artifact: MeetLoaf-windows
-            # NSIS writes its uninstaller stubs into dist/ alongside the real
-            # installers. Without the exclusion they ride along into the
+            # latest.yml is not optional: it's the metadata electron-updater
+            # reads to discover versions, so a release without it silently
+            # never updates anyone.
+            #
+            # NSIS also writes its uninstaller stubs into dist/ alongside the
+            # real installers. Without the exclusion they ride along into the
             # release, where MeetLoaf-Setup-x64.__uninstaller.exe sitting next
             # to MeetLoaf-Setup-x64.exe is an invitation to run the wrong one.
             path: |
               app/dist/*.exe
+              app/dist/latest.yml
               !app/dist/*__uninstaller*.exe
     defaults:
       run:

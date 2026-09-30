@@ -1043,8 +1043,118 @@ function versionIsNewer(latest, current) {
 let lastUpdateCheckAt = 0;
 const UPDATE_CHECK_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+// ─── Auto-update (Windows only) ────────────────────────────────────────────
+//
+// electron-updater downloads the new installer and runs it. Windows only, and
+// that isn't an oversight: on macOS electron-updater drives Squirrel.Mac, which
+// verifies the downloaded app's code signature before applying it. MeetLoaf is
+// ad-hoc signed (no Apple Developer ID), so that check fails and there is no
+// flag to skip it — the verification is precisely what stops an update being
+// swapped in transit. macOS therefore keeps the notify-and-open-the-page path
+// below until a Developer ID exists, at which point this becomes a two-line
+// change: drop the IS_WIN gate and add "zip" to mac.target.
+//
+// Requires the repo to be public, or the metadata request 404s exactly like
+// the GitHub API path did.
+let autoUpdater = null;
+let updateDownloaded = false;
+
+function initAutoUpdater() {
+  // Unpackaged runs have no app-update.yml, and electron-updater throws rather
+  // than degrading, so `npm start` would break.
+  if (!IS_WIN || !app.isPackaged) return;
+  try {
+    ({ autoUpdater } = require('electron-updater'));
+  } catch (err) {
+    console.warn(`electron-updater unavailable: ${err.message}`);
+    return;
+  }
+  // Ask before spending someone's bandwidth on a ~100MB installer.
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', async (info) => {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      message: `MeetLoaf ${info.version} is available.`,
+      detail: `You have ${app.getVersion()}. Download it now?`,
+      buttons: ['Download', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    });
+    if (response === 0) autoUpdater.downloadUpdate().catch((err) => {
+      console.error(`Update download failed: ${err.message}`);
+    });
+  });
+
+  autoUpdater.on('update-downloaded', async (info) => {
+    updateDownloaded = true;
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      message: `MeetLoaf ${info.version} is ready to install.`,
+      detail: 'Installing restarts the app. It will also install by itself next time you quit.',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    });
+    if (response !== 0) return;
+    // quitAndInstall spawns the installer and quits. The before-quit handler
+    // may hold the quit briefly to flush a Home Assistant "leave" — that's
+    // fine, the installer waits for the process to exit either way.
+    app.isQuitting = true;
+    autoUpdater.quitAndInstall();
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error(`Auto-update error: ${err && err.message}`);
+  });
+}
+
+// Manual checks want to hear "you're up to date" or an error; background ones
+// should stay quiet. These two listeners are attached per-check rather than in
+// init so a background poll can't surface a dialog.
+function checkForUpdatesWin(manual) {
+  const once = (event, fn) => {
+    const wrapped = (...args) => { autoUpdater.off(event, wrapped); fn(...args); };
+    autoUpdater.on(event, wrapped);
+  };
+  if (manual) {
+    once('update-not-available', () => {
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        message: `You're on the latest version (${app.getVersion()}).`
+      });
+    });
+    once('error', (err) => {
+      dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        message: 'Could not check for updates.',
+        detail: err && err.message ? err.message : String(err)
+      });
+    });
+  }
+  if (updateDownloaded) {
+    // Already fetched and waiting; re-running the check would find nothing new.
+    autoUpdater.emit('update-downloaded', { version: 'the downloaded update' });
+    return;
+  }
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error(`Update check failed: ${err.message}`);
+  });
+}
+
 async function checkForUpdates({ manual = false } = {}) {
   if (!manual && Date.now() - lastUpdateCheckAt < UPDATE_CHECK_MIN_INTERVAL_MS) return;
+  if (autoUpdater) {
+    lastUpdateCheckAt = Date.now();
+    return checkForUpdatesWin(manual);
+  }
+  return checkForUpdatesViaReleasePage({ manual });
+}
+
+// macOS (and any unpackaged run): compare tags and offer to open the release
+// page. No download, no install — see the note above.
+async function checkForUpdatesViaReleasePage({ manual = false } = {}) {
   lastUpdateCheckAt = Date.now();
 
   const slug = parseRepoSlug();
@@ -1634,6 +1744,7 @@ if (!gotLock) {
       setTimeout(openWelcomeWindow, 600);
     }
 
+    initAutoUpdater();
     setTimeout(() => checkForUpdates(), 5000);
   });
 
