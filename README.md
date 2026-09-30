@@ -127,7 +127,9 @@ Drop that file into Slack / Drive / wherever and colleagues can use the install 
    git tag v0.2.0
    git push origin v0.2.0
    ```
-3. CI (`.github/workflows/release.yml`) builds the DMG on a `macos-14` runner (Apple Silicon) and attaches it to a GitHub Release named `v0.2.0`.
+3. CI (`.github/workflows/release.yml`) builds both platforms in parallel — the arm64 DMG on `macos-14`, the x64 + arm64 installers on `windows-latest` — then a separate `release` job collects both and attaches them to a GitHub Release named `v0.2.0`.
+
+The same workflow runs on every pull request, building both platforms and uploading them as workflow artifacts without publishing anything. That's deliberate: a Windows build problem should surface on the PR, not halfway through cutting a release. Only a `v*` tag reaches the `release` job, and only that job gets a write-scoped token.
 
 Colleagues on older versions get prompted by MeetLoaf's update checker within 5 seconds of next launch.
 
