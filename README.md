@@ -48,7 +48,12 @@ Same idea as macOS: SmartScreen's *"Windows protected your PC"* warning is trigg
 > Unblock-File .\MeetLoaf-Setup.exe
 > ```
 
-MeetLoaf checks for updates on launch (and from the **MeetLoaf → Check for Updates…** menu). It won't auto-install — it just pings the GitHub Releases API, and if a newer tag exists, offers to open the release page.
+MeetLoaf checks for updates on launch and from the **MeetLoaf → Check for Updates…** menu. What happens next depends on your platform:
+
+- **Windows** downloads and installs. You're asked before the download starts and again before it restarts; decline the restart and it installs the next time you quit.
+- **macOS** offers to open the release page, and you re-download by hand.
+
+That split isn't an oversight. On macOS the updater drives Squirrel.Mac, which verifies the downloaded app's code signature before applying it — and MeetLoaf is ad-hoc signed, with no Apple Developer ID. That check can't be skipped, and shouldn't be: it's what stops an update being swapped in transit. Buying a Developer ID (§ *About signing*) is what unlocks macOS auto-update; the code is already there behind a platform check.
 
 Once MeetLoaf is installed, follow **§2 Firefox extension** and **§3 Velja** below to wire link routing.
 

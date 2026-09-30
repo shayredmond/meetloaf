@@ -22,7 +22,10 @@ fi
 
 # 2. Build unsigned .app via electron-builder
 rm -rf "$DIST_DIR"
-npx electron-builder --mac --arm64
+# --publish never: a publish provider is configured so electron-updater gets
+# its latest.yml, but publishing is the release job's business alone. Without
+# this, electron-builder's default (onTagOrDraft) would race it on tag builds.
+npx electron-builder --mac --arm64 --publish never
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "Expected build at $APP_DIR not found" >&2
