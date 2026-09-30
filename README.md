@@ -195,6 +195,10 @@ Settings (⌘,) → **Routing** → next to "Chrome / Chromium extension":
 
 The extension is now active. Toggle it via the puzzle-piece icon in your browser's toolbar.
 
+The first Meet link you click shows the browser's *"Open MeetLoaf?"* prompt — tick **Always allow** and click **Open**. From then on links go straight to MeetLoaf, and the hand-off tab closes itself after a 10-second countdown (or goes back, if you clicked the link from another page) — **Close now** skips the wait. **Join in the browser instead** on the hand-off tab lets that one tab load Meet normally.
+
+How it works: a `declarativeNetRequest` rule redirects `meet.google.com/xxx-yyyy-zzz` to the extension's `handoff.html` *before the request is sent*, so the Meet page never loads in the browser and never grabs the camera/mic. (An earlier version reacted to `webNavigation.onBeforeNavigate`, which can't cancel the navigation — the call opened in both the browser and MeetLoaf.)
+
 ### Submitting to the Chrome Web Store (optional, one-click flow)
 
 If you'd rather have a single-click install for colleagues:
