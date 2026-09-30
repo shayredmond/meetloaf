@@ -4,6 +4,11 @@ const backBtn = document.getElementById('backBtn');
 const nextBtn = document.getElementById('nextBtn');
 const closeBtn = document.getElementById('closeBtn');
 
+// The Settings shortcut is ⌘, on macOS and Ctrl+, everywhere else.
+if (window.welcome.platform !== 'darwin') {
+  document.querySelectorAll('[data-settings-key]').forEach((k) => { k.textContent = 'Ctrl + ,'; });
+}
+
 let current = 0;
 const last = steps.length - 1;
 

@@ -1,7 +1,7 @@
 {
   "name": "meetloaf",
   "version": "0.1.7",
-  "description": "Standalone Google Meet app for macOS",
+  "description": "Standalone Google Meet app for macOS and Windows",
   "main": "main.js",
   "author": "shay.redmond@nabucasa.com",
   "license": "MIT",
@@ -12,9 +12,12 @@
   "scripts": {
     "start": "electron .",
     "icon": "./scripts/build-icon.sh",
-    "dist": "./scripts/build-dmg.sh"
+    "icon:win": "node scripts/build-icon-win.js",
+    "dist": "./scripts/build-dmg.sh",
+    "dist:win": "node scripts/build-icon-win.js && electron-builder --win --x64 --arm64 --publish never"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "electron": "^42.0.0",
     "electron-builder": "^26.0.0"
   },
@@ -44,6 +47,32 @@
         "NSMicrophoneUsageDescription": "Google Meet needs your microphone for audio calls."
       }
     },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "icon.ico",
+      "protocols": [
+        {
+          "name": "Google Meet",
+          "schemes": [
+            "meet"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "shortcutName": "MeetLoaf"
+    },
     "files": [
       "main.js",
       "main-preload.js",
@@ -52,10 +81,13 @@
       "icon.icns",
       "trayTemplate.png",
       "trayTemplate@2x.png",
+      "icon.png",
+      "tray.png",
+      "tray@2x.png",
       "firefox-extension.xpi",
       "package.json",
+      "picker/**",
       "settings/**",
-      "mini/**",
       "welcome/**"
     ],
     "extraResources": [
