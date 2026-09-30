@@ -87,16 +87,41 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+
+      # The in-app update checker compares the release's tag against
+      # app.getVersion(). Tagging v0.1.8 while package.json still says 0.1.7
+      # would prompt every user to "upgrade" to a build reporting the version
+      # they already run — permanently, since the prompt never stops being
+      # true. Cheaper to refuse the release than to yank it afterwards.
+      - name: Tag must match package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./app/package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match app/package.json version $PKG"
+            exit 1
+          fi
+          echo "Tag and package.json agree on $PKG"
+
       - name: Collect every platform's artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Publish
+      # Published as a DRAFT on purpose. The tag builds everything and
+      # assembles the release, but nothing is public until you press Publish
+      # in the GitHub UI — so you can download the DMG and the installers and
+      # try them first. It also keeps users quiet until then: the update
+      # checker reads /releases/latest, which excludes drafts.
+      - name: Assemble draft release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/**
           generate_release_notes: true
+          draft: true
+          # An empty release is worse than a failed one.
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
