@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -105,6 +105,16 @@ const MODIFIER_ALIASES = {
   Shift: 'Shift'
 };
 
+// Punctuation keys saved by earlier versions, which wrote DOM event.code names
+// that Electron rejects. Translated on the way in so an existing binding starts
+// working on upgrade rather than staying silently dead.
+const LEGACY_KEY_TOKENS = {
+  Backquote: '`', Minus: '-', Equal: '=',
+  BracketLeft: '[', BracketRight: ']',
+  Backslash: '\\', Semicolon: ';', Quote: "'",
+  Comma: ',', Period: '.', Slash: '/'
+};
+
 function normalizeAccelerator(accel) {
   if (!accel) return '';
   const mods = new Set();
@@ -115,6 +125,7 @@ function normalizeAccelerator(accel) {
     else key = part;
   }
   if (!key) return '';
+  key = LEGACY_KEY_TOKENS[key] || key;
   return [...MODIFIER_ORDER.filter((m) => mods.has(m)), key].join('+');
 }
 
@@ -574,7 +585,7 @@ function describeFetchError(err, timeoutMs) {
   // permission rather than anything about Home Assistant — and the OS denies
   // it silently, so nothing else will ever say so.
   if (process.platform === 'darwin' && (!code || CONNECT_FAILURES.has(code))) {
-    return `${base} — if Home Assistant is on your LAN, check System Settings → Privacy & Security → Local Network and make sure MeetLoaf is allowed`;
+    return `${base} — if Home Assistant is on your LAN, check System Settings → Privacy & Security → Local Network, and any per-app firewall (LuLu, Little Snitch) for a rule covering MeetLoaf`;
   }
   return base;
 }
@@ -585,7 +596,14 @@ async function haSend(url, headers, body, { timeoutMs = 5000, attempts = 2 } = {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(url, {
+      // net.fetch, not the global fetch. They are not interchangeable here:
+      // net.fetch goes through Chromium's network stack, the global one through
+      // Node's sockets. On macOS the local-network permission is only granted
+      // to the Chromium path, so a Home Assistant on the LAN answers net.fetch
+      // and refuses Node with EHOSTUNREACH — but *only* when the app is
+      // launched normally. Launched from a terminal it inherits the terminal's
+      // own grant and both work, which is what made this take six days to find.
+      const res = await net.fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
@@ -1473,7 +1491,10 @@ ipcMain.handle('permissions:test-local-network', async () => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    await fetch(ha.baseUrl, { method: 'GET', signal: controller.signal });
+    // net.fetch, matching haSend. Probing with the global fetch would report
+    // "blocked" on a machine where Home Assistant works perfectly, because only
+    // the Chromium stack holds the local-network grant.
+    await net.fetch(ha.baseUrl, { method: 'GET', signal: controller.signal });
     return { ok: true, status: 'granted', detail: `Reached ${haRedact(ha.baseUrl)}` };
   } catch (err) {
     return { ok: false, status: 'blocked', error: describeFetchError(err, 5000) };
@@ -1707,10 +1728,14 @@ const INPUT_CODE_TO_KEY = (() => {
   for (let d = 0; d <= 9; d++) m[`Digit${d}`] = String(d);
   for (let f = 1; f <= 24; f++) m[`F${f}`] = `F${f}`;
   Object.assign(m, {
-    Backquote: 'Backquote', Minus: 'Minus', Equal: 'Equal',
-    BracketLeft: 'BracketLeft', BracketRight: 'BracketRight',
-    Backslash: 'Backslash', Semicolon: 'Semicolon', Quote: 'Quote',
-    Comma: 'Comma', Period: 'Period', Slash: 'Slash',
+    // Electron accelerators take the literal character for punctuation keys,
+    // not the DOM event.code name. Registering "Backquote" throws outright, so
+    // every punctuation binding silently failed at startup — visible only as a
+    // console warning nobody sees unless they run the app from a terminal.
+    Backquote: '`', Minus: '-', Equal: '=',
+    BracketLeft: '[', BracketRight: ']',
+    Backslash: '\\', Semicolon: ';', Quote: "'",
+    Comma: ',', Period: '.', Slash: '/',
     Space: 'Space', Enter: 'Enter', Tab: 'Tab',
     ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
     Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
