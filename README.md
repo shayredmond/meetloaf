@@ -121,6 +121,19 @@ npm start           # launches MeetLoaf against dev Electron
 
 Global hotkeys, camera/mic, and `meet://` handoff all work in dev. The only thing that requires a packaged `.app` in `/Applications` is the OS registering MeetLoaf as the default `meet://` handler for *other* apps.
 
+### Permissions
+
+**Settings → Permissions** shows what the OS has granted MeetLoaf, with a link into the relevant system pane for each. What it can tell you differs by platform, and the panel is built around those limits rather than pretending otherwise:
+
+| | macOS | Windows |
+|---|---|---|
+| Camera / Microphone status | read | read (global Win10+ setting) |
+| Screen Recording status | read | row hidden — no such permission |
+| Prompting from the app | only while *not yet requested* | not possible |
+| Local Network | **probed, not read** | row hidden — no such permission |
+
+Two things worth understanding. **A denied permission can't be re-requested by the app** — on macOS the OS refuses to ask twice, and Windows has no prompt API at all, so the honest action is the Settings link. And **Local Network has no API whatsoever**: Electron can neither read nor request it, so that row offers a **Test** instead, which attempts to reach your Home Assistant base URL and reports what happened. That's empirical rather than authoritative — a failure could be Home Assistant being down — but it's the only signal that exists, and it's the permission most likely to be silently missing.
+
 ### Configure hotkeys
 
 Open **MeetLoaf → Settings…** (`⌘,`). Click any shortcut field and press the key combo you want — Raycast-style live recording. `⌫` clears, `Esc` cancels. Saves automatically on each change and re-registers global shortcuts immediately.
