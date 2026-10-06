@@ -296,6 +296,101 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // Permissions tab. Rows come from the main process, which decides what
+  // applies to this platform — the renderer only draws what it's handed, so
+  // there's one place that knows Windows has no Local Network permission.
+  const PERMISSION_COPY = {
+    granted: { dot: 'ok', text: 'Granted' },
+    denied: { dot: 'bad', text: 'Denied' },
+    restricted: { dot: 'bad', text: 'Restricted by policy' },
+    'not-determined': { dot: 'warn', text: 'Not yet requested' },
+    unknown: { dot: 'warn', text: 'Unknown' },
+    untested: { dot: 'warn', text: 'Not tested' },
+    blocked: { dot: 'bad', text: 'Blocked' },
+    unconfigured: { dot: 'warn', text: 'Nothing to test' }
+  };
+
+  const permissionRowsEl = document.getElementById('permissionRows');
+
+  function renderPermissions(rows) {
+    permissionRowsEl.innerHTML = '';
+    for (const row of rows) {
+      const copy = PERMISSION_COPY[row.status] || PERMISSION_COPY.unknown;
+      const el = document.createElement('div');
+      el.className = 'row permission-row';
+      el.dataset.id = row.id;
+
+      const label = document.createElement('label');
+      label.innerHTML = `<span class="perm-dot ${copy.dot}" aria-hidden="true"></span>${row.label}`;
+      const help = document.createElement('span');
+      help.className = 'row-help';
+      help.textContent = `${copy.text} — ${row.detail}`;
+      label.appendChild(help);
+      el.appendChild(label);
+
+      const actions = document.createElement('div');
+      actions.className = 'config-path-actions';
+
+      if (row.testable) {
+        const test = document.createElement('button');
+        test.type = 'button';
+        test.className = 'btn-link';
+        test.textContent = 'Test';
+        test.addEventListener('click', async () => {
+          help.textContent = 'Testing\u2026';
+          const r = await window.meetloaf.testLocalNetwork();
+          const c = PERMISSION_COPY[r.status] || PERMISSION_COPY.unknown;
+          label.querySelector('.perm-dot').className = `perm-dot ${c.dot}`;
+          help.textContent = r.ok ? `${c.text} — ${r.detail}` : `${c.text} — ${r.error}`;
+        });
+        actions.appendChild(test);
+      }
+
+      // Only offered where the OS will actually prompt: macOS, and only before
+      // a decision has been made. Everywhere else the honest action is Settings.
+      if (row.canPrompt) {
+        const grant = document.createElement('button');
+        grant.type = 'button';
+        grant.className = 'btn-link';
+        grant.textContent = 'Grant';
+        grant.addEventListener('click', async () => {
+          await window.meetloaf.requestPermission(row.id);
+          loadPermissions();
+        });
+        actions.appendChild(grant);
+      }
+
+      if (row.pane) {
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'btn-link';
+        open.textContent = 'Open Settings';
+        open.addEventListener('click', () => window.meetloaf.openPermissionSettings(row.id));
+        actions.appendChild(open);
+      }
+
+      el.appendChild(actions);
+      permissionRowsEl.appendChild(el);
+    }
+  }
+
+  async function loadPermissions() {
+    try {
+      const { rows } = await window.meetloaf.getPermissions();
+      renderPermissions(rows);
+    } catch {
+      permissionRowsEl.innerHTML = '<div class="row"><label>Could not read permission state</label></div>';
+    }
+  }
+
+  if (permissionRowsEl) {
+    loadPermissions();
+    // A permission changed in System Settings won't notify us, so re-read when
+    // the window regains focus — that's when someone has just come back from
+    // granting one.
+    window.addEventListener('focus', loadPermissions);
+  }
+
   // Routing tab: Firefox extension install
   const firefoxStatus = document.getElementById('firefoxStatus');
   const installFirefoxBtn = document.getElementById('installFirefoxBtn');

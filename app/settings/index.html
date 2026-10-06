@@ -22,6 +22,12 @@
           </svg>
           <span>Window</span>
         </button>
+        <button type="button" class="nav-item" data-target="permissions" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/>
+          </svg>
+          <span>Permissions</span>
+        </button>
         <button type="button" class="nav-item" data-target="routing" role="tab" aria-selected="false">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path fill="currentColor" d="M9 11l-4 4 4 4v-3h4v-2H9v-3zm6-6V2l-4 4 4 4V7h4v8H8v2h13V5h-6z"/>
@@ -133,6 +139,15 @@
               </div>
               <div class="row-help mode-help">Active only during a meeting — the lobby behaves like Standard.</div>
             </div>
+          </div>
+        </section>
+
+        <section class="section" id="panel-permissions" role="tabpanel" hidden>
+          <h2>Permissions</h2>
+          <p class="section-desc">What the operating system has granted MeetLoaf. A permission that's been denied can only be changed in system settings — apps aren't allowed to ask twice.</p>
+
+          <div class="rows" id="permissionRows">
+            <div class="row"><label>Checking&hellip;</label></div>
           </div>
         </section>
 

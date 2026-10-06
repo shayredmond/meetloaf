@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -1385,6 +1385,122 @@ ipcMain.on('picker:choose', (_e, choice) => {
       : null);
   }
   if (pickerWindow && !pickerWindow.isDestroyed()) pickerWindow.close();
+});
+
+// ─── Permissions ───────────────────────────────────────────────────────────
+//
+// What the OS will tell us is uneven, and the panel is honest about that rather
+// than inventing certainty:
+//
+//   camera / microphone  readable on macOS and Windows; promptable on macOS
+//                        only, and only while the status is not-determined —
+//                        once denied the OS never asks again and Settings is
+//                        the only route.
+//   screen               readable on macOS. Windows always reports granted
+//                        because it has no such permission, so the row is
+//                        dropped there rather than shown as a permanent tick.
+//   local network        macOS 15+ gates LAN access and Electron exposes no way
+//                        to read or request it. The only available signal is
+//                        whether a LAN connection actually succeeds, so this row
+//                        is probed rather than queried. It is the permission
+//                        that silently broke Home Assistant webhooks for six
+//                        days, which is why it is worth surfacing imperfectly.
+const SETTINGS_PANES = {
+  darwin: {
+    camera: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera',
+    microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    localNetwork: 'x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork'
+  },
+  win32: {
+    camera: 'ms-settings:privacy-webcam',
+    microphone: 'ms-settings:privacy-microphone'
+  }
+};
+
+function settingsPane(id) {
+  return (SETTINGS_PANES[process.platform] || {})[id] || null;
+}
+
+function mediaStatus(type) {
+  try {
+    return systemPreferences.getMediaAccessStatus(type);
+  } catch {
+    // Linux, or an Electron that doesn't implement it for this type.
+    return 'unknown';
+  }
+}
+
+function permissionRows() {
+  const rows = [
+    { id: 'camera', label: 'Camera', detail: 'Needed for video in meetings.', status: mediaStatus('camera') },
+    { id: 'microphone', label: 'Microphone', detail: 'Needed to be heard in meetings.', status: mediaStatus('microphone') }
+  ];
+
+  if (IS_MAC) {
+    rows.push({ id: 'screen', label: 'Screen Recording', detail: 'Needed to share your screen.', status: mediaStatus('screen') });
+    rows.push({
+      id: 'localNetwork',
+      label: 'Local Network',
+      detail: 'Needed to reach Home Assistant on your network.',
+      status: 'untested',
+      testable: true
+    });
+  }
+
+  return rows.map((r) => ({
+    ...r,
+    // askForMediaAccess only prompts from not-determined, and only on macOS.
+    canPrompt: IS_MAC && r.status === 'not-determined' && (r.id === 'camera' || r.id === 'microphone'),
+    pane: !!settingsPane(r.id)
+  }));
+}
+
+ipcMain.handle('permissions:get', () => ({ platform: process.platform, rows: permissionRows() }));
+
+ipcMain.handle('permissions:request', async (_e, id) => {
+  if (!IS_MAC || (id !== 'camera' && id !== 'microphone')) {
+    return { ok: false, error: 'This permission can only be changed in system settings' };
+  }
+  try {
+    const granted = await systemPreferences.askForMediaAccess(id);
+    return { ok: granted, status: mediaStatus(id) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('permissions:open-settings', async (_e, id) => {
+  const pane = settingsPane(id);
+  if (!pane) return { ok: false, error: 'No settings pane for this permission on this platform' };
+  try {
+    await shell.openExternal(pane);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Probes the configured Home Assistant base URL with a plain GET of the root,
+// so it can't trigger an automation the way firing a webhook would.
+ipcMain.handle('permissions:test-local-network', async () => {
+  const ha = haConfig();
+  if (!ha.baseUrl) {
+    return { ok: false, status: 'unconfigured', error: 'Set a Home Assistant base URL first (Home Assistant tab)' };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    // net.fetch, matching haSend. Probing with the global fetch would report
+    // "blocked" on a machine where Home Assistant works perfectly, because only
+    // the Chromium stack holds the local-network grant.
+    await net.fetch(ha.baseUrl, { method: 'GET', signal: controller.signal });
+    return { ok: true, status: 'granted', detail: `Reached ${haRedact(ha.baseUrl)}` };
+  } catch (err) {
+    return { ok: false, status: 'blocked', error: describeFetchError(err, 5000) };
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 // Config-location management
