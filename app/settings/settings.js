@@ -5,17 +5,13 @@ const CODE_MAP = (() => {
   for (let d = 0; d <= 9; d++) m[`Digit${d}`] = String(d);
   for (let f = 1; f <= 24; f++) m[`F${f}`] = `F${f}`;
   Object.assign(m, {
-    Backquote: 'Backquote',
-    Minus: 'Minus',
-    Equal: 'Equal',
-    BracketLeft: 'BracketLeft',
-    BracketRight: 'BracketRight',
-    Backslash: 'Backslash',
-    Semicolon: 'Semicolon',
-    Quote: 'Quote',
-    Comma: 'Comma',
-    Period: 'Period',
-    Slash: 'Slash',
+    // Electron takes the literal character for punctuation, not the event.code
+    // name — "Backquote" throws on registration. Recording one of these used to
+    // produce a binding that looked saved and never worked.
+    Backquote: '`', Minus: '-', Equal: '=',
+    BracketLeft: '[', BracketRight: ']',
+    Backslash: '\\', Semicolon: ';', Quote: "'",
+    Comma: ',', Period: '.', Slash: '/',
     Space: 'Space',
     Enter: 'Enter',
     Tab: 'Tab',
