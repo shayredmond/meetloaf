@@ -51,7 +51,8 @@
           }
         ],
         "NSCameraUsageDescription": "Google Meet needs your camera for video calls.",
-        "NSMicrophoneUsageDescription": "Google Meet needs your microphone for audio calls."
+        "NSMicrophoneUsageDescription": "Google Meet needs your microphone for audio calls.",
+        "NSLocalNetworkUsageDescription": "MeetLoaf needs local network access to send meeting events to Home Assistant on your network."
       }
     },
     "win": {

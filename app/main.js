@@ -557,6 +557,28 @@ function haRedact(url) {
   return String(url).replace(/(\/api\/webhook\/)[^/?#]+/, '$1\u2026').split('?')[0];
 }
 
+// fetch() reports every transport failure as the bare string "fetch failed" and
+// puts the actual reason in err.cause. Dropping that cost six days of silent
+// failures once: the app said "fetch failed", which is true of a refused
+// connection, a DNS miss, an expired certificate and a blocked local network
+// alike, and nothing distinguished them.
+const CONNECT_FAILURES = new Set([
+  'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'EHOSTDOWN', 'EACCES'
+]);
+
+function describeFetchError(err, timeoutMs) {
+  if (err.name === 'AbortError') return `timed out after ${timeoutMs}ms`;
+  const code = err.cause && (err.cause.code || err.cause.message);
+  const base = code ? `${err.message}: ${code}` : err.message;
+  // A connection-level failure on macOS is very often the Local Network
+  // permission rather than anything about Home Assistant — and the OS denies
+  // it silently, so nothing else will ever say so.
+  if (process.platform === 'darwin' && (!code || CONNECT_FAILURES.has(code))) {
+    return `${base} — if Home Assistant is on your LAN, check System Settings → Privacy & Security → Local Network and make sure MeetLoaf is allowed`;
+  }
+  return base;
+}
+
 async function haSend(url, headers, body, { timeoutMs = 5000, attempts = 2 } = {}) {
   let lastErr;
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -579,7 +601,7 @@ async function haSend(url, headers, body, { timeoutMs = 5000, attempts = 2 } = {
         return { ok: true, status: res.status };
       }
     } catch (err) {
-      lastErr = err.name === 'AbortError' ? `timed out after ${timeoutMs}ms` : err.message;
+      lastErr = describeFetchError(err, timeoutMs);
     } finally {
       clearTimeout(timer);
     }
