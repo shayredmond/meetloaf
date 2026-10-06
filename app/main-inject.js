@@ -178,6 +178,269 @@
     );
   }
 
+  // ─── Presentation pop-out ───────────────────────────────────────────────
+  //
+  // When a *remote* participant starts presenting, split their shared content
+  // out into its own window, so the main window can go back to being the
+  // faces. The stream is never re-captured or mirrored: a window opened with
+  // window.open() from this page is same-origin and lives in the same
+  // renderer, so a <video> inside it can be handed Meet's own MediaStream by
+  // reference. Electron has no usable Picture-in-Picture path on macOS, so
+  // this is the only way to get a detached live video at all.
+  //
+  // Detection keys on facts Meet states, not on what a video looks like. An
+  // earlier version guessed from object-fit, resolution and tile size; it
+  // popped out cameras on join and missed real shares. What a live capture
+  // (Oct 2026) showed instead:
+  //
+  //   - Every tile carries data-participant-id="spaces/…/devices/N", and a
+  //     presentation is its own device, separate from the presenter's camera.
+  //   - Only the presentation tile is labelled as one: its name reads
+  //     "X (Presentation)" and its pin button "Pin X's presentation to …".
+  //     Camera tiles say "Pin X to …".
+  //   - A remote track's label is its id (a UUID). Local tracks carry the
+  //     device name (camera) or are blank with a displaySurface (your share),
+  //     which excludes your own presentation exactly.
+  //   - Meet reuses <video> elements across tiles — when the presentation ended
+  //     the same element was handed the presenter's camera — so this re-decides
+  //     from the tile on every tick and never holds on to an element.
+  //
+  // Like the call-phase watcher this reads English labels. A Meet wording
+  // change costs the feature; it can't pop out the wrong person, because a
+  // camera tile never carries the presentation label.
+  const PRESENTATION_TILE_RE = /\(presentation\)|['’]s presentation\b/i;
+  const OWN_PRESENTATION_RE = /\byour presentation\b/i;
+
+  // Remote WebRTC tracks have no device behind them, so Chromium labels them
+  // with their own id. Anything else is a local capture.
+  function isRemoteTrack(t) {
+    let settings = {};
+    try { settings = t.getSettings() || {}; } catch { /* track torn down */ }
+    return t.label === t.id && !settings.displaySurface;
+  }
+
+  function liveRemoteStream(v) {
+    const stream = v && v.srcObject;
+    if (!stream || typeof stream.getVideoTracks !== 'function') return null;
+    if (!v.videoWidth || !v.videoHeight) return null;
+    const tracks = stream.getVideoTracks();
+    if (!tracks.length || !tracks.every((t) => t.readyState === 'live' && isRemoteTrack(t))) return null;
+    return stream;
+  }
+
+  // A tile's labels (name, pin and audio buttons) are siblings of the element
+  // carrying data-participant-id rather than descendants of it. Widen to the
+  // largest ancestor that still holds only this one tile: everything in there
+  // belongs to it, and nothing from a neighbouring tile can leak in.
+  function tileScope(tile) {
+    let scope = tile;
+    for (let el = tile.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (el.querySelectorAll('[data-participant-id]').length !== 1) break;
+      scope = el;
+    }
+    return scope;
+  }
+
+  function tileLabels(scope) {
+    const labels = [];
+    for (const el of scope.querySelectorAll('[aria-label], span, [role="tooltip"]')) {
+      const aria = el.getAttribute('aria-label');
+      if (aria) labels.push(aria.trim());
+      // Own text only: a wrapper's concatenated text could match anything.
+      let own = '';
+      for (const n of el.childNodes) if (n.nodeType === 3) own += n.textContent;
+      own = own.trim();
+      if (own && own.length <= 120) labels.push(own);
+    }
+    return labels;
+  }
+
+  function isPresentationLabelled(labels) {
+    return labels.some((l) => PRESENTATION_TILE_RE.test(l)) &&
+           !labels.some((l) => OWN_PRESENTATION_RE.test(l));
+  }
+
+  function inspectTiles() {
+    const seen = new Set();
+    const out = [];
+    for (const tile of document.querySelectorAll('[data-participant-id]')) {
+      const video = tile.querySelector('video');
+      if (!video) continue;
+      const id = tile.getAttribute('data-participant-id');
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const labels = tileLabels(tileScope(tile));
+      out.push({
+        id,
+        tile,
+        video,
+        stream: liveRemoteStream(video),
+        presentation: isPresentationLabelled(labels),
+        labels
+      });
+    }
+    return out;
+  }
+
+  function presentationStream() {
+    const hit = inspectTiles().find((t) => t.presentation && t.stream);
+    return hit ? hit.stream : null;
+  }
+
+  const POPOUT_NAME = 'meetloaf-presentation';
+  // How long the presentation has to stay gone before the window closes. Meet
+  // tears down and rebuilds tiles during layout changes, so brief gaps are
+  // normal and must not make the window flap.
+  const POPOUT_CLOSE_GRACE_MS = 5000;
+
+  const POPOUT_DOC = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Presentation</title>
+<meta name="color-scheme" content="dark">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+</style></head>
+<body><video id="meetloaf-presentation" autoplay playsinline muted></video></body></html>`;
+
+  let popout = null;
+  let popoutVideo = null;
+  // Set when the user closes the window by hand. Cleared once the presentation
+  // ends, so dismissing it applies to this presentation only.
+  let popoutDismissed = false;
+  // A manual pop-out (View menu) shows whatever the user asked for, so the
+  // tick mustn't close it just because detection doesn't agree.
+  let popoutManual = false;
+  let lastSeenAt = 0;
+
+  function openPopout() {
+    if (popout && !popout.closed) return true;
+    popout = window.open('', POPOUT_NAME, 'width=1024,height=640');
+    if (!popout) {
+      log('pop-out window was blocked');
+      return false;
+    }
+    popout.document.open();
+    popout.document.write(POPOUT_DOC);
+    popout.document.close();
+    popoutVideo = popout.document.getElementById('meetloaf-presentation');
+    return true;
+  }
+
+  function closePopout(reason) {
+    if (popout && !popout.closed) {
+      log('closing pop-out:', reason);
+      popout.close();
+    }
+    popout = null;
+    popoutVideo = null;
+    popoutManual = false;
+  }
+
+  // Assigning the same MediaStream to a second <video> is fine, and it works
+  // across windows because about:blank inherits the opener's origin. Re-run on
+  // every tick: Meet swaps elements and streams freely, and this no-ops when
+  // nothing changed.
+  function attach(stream) {
+    if (!popoutVideo || !stream || popoutVideo.srcObject === stream) return;
+    popoutVideo.srcObject = stream;
+    const played = popoutVideo.play();
+    if (played && typeof played.catch === 'function') played.catch(() => {});
+  }
+
+  function presentationTick(enabled) {
+    if (popoutManual) {
+      if (popout && popout.closed) closePopout('closed by user');
+      return !!popout;
+    }
+    const stream = enabled ? presentationStream() : null;
+    const now = Date.now();
+
+    if (stream) {
+      lastSeenAt = now;
+      if (popoutDismissed) return true;
+      if (popout && popout.closed) {
+        // Closed from its own title bar while the presentation is still
+        // running: that's "not this one, thanks", not an invitation to
+        // reopen on the next tick.
+        popoutDismissed = true;
+        popout = null;
+        popoutVideo = null;
+        return true;
+      }
+      const wasOpen = !!popout;
+      if (openPopout()) {
+        if (!wasOpen) log('presentation popped out:', presentationDebug().tiles.filter((t) => t.presentation));
+        attach(stream);
+      }
+      return true;
+    }
+
+    popoutDismissed = false;
+    if (popout && now - lastSeenAt > POPOUT_CLOSE_GRACE_MS) closePopout('presentation ended');
+    return false;
+  }
+
+  // Run __meetloafPresentationDebug() from DevTools during a call to see what
+  // the detector sees for every tile.
+  function presentationDebug() {
+    return {
+      detected: !!presentationStream(),
+      open: !!(popout && !popout.closed),
+      manual: popoutManual,
+      dismissed: popoutDismissed,
+      tiles: inspectTiles().map((t) => ({
+        id: t.id,
+        presentation: t.presentation,
+        remoteLive: !!t.stream,
+        size: `${t.video.videoWidth}x${t.video.videoHeight}`,
+        labels: t.labels.filter((l) => /present|pin|\(/i.test(l))
+      }))
+    };
+  }
+
+  window.__meetloafPresentationDebug = presentationDebug;
+
+  // Called by the main process on its unthrottled poll, and locally below.
+  window.__meetloafPresentationTick = presentationTick;
+
+  // Manual override for the View menu: the detected presentation if there is
+  // one, otherwise the largest remote video. It's the escape hatch for when
+  // Meet's labels moved and auto-detection didn't fire.
+  window.__meetloafPopout = {
+    isOpen: () => !!(popout && !popout.closed),
+    open: () => {
+      let stream = presentationStream();
+      if (!stream) {
+        const area = (v) => v.videoWidth * v.videoHeight;
+        const best = inspectTiles().filter((t) => t.stream)
+          .sort((a, b) => area(b.video) - area(a.video))[0];
+        stream = best ? best.stream : null;
+      }
+      if (!stream) {
+        log('pop-out requested but no remote video is playing');
+        return false;
+      }
+      popoutDismissed = false;
+      if (!openPopout()) return false;
+      popoutManual = true;
+      attach(stream);
+      return true;
+    },
+    close: () => {
+      popoutDismissed = true;
+      closePopout('manual');
+    },
+    // Main destroyed the window itself (the call ended, or the renderer is
+    // being replaced). Drop our handle without recording it as a dismissal —
+    // that flag is reserved for the user closing the window by hand.
+    reset: () => {
+      popout = null;
+      popoutVideo = null;
+      popoutDismissed = false;
+      popoutManual = false;
+    }
+  };
+
   let raf = null;
   function schedule() {
     if (raf) return;
@@ -185,6 +448,13 @@
       raf = null;
       try { inject(); } catch (err) { log('inject error', err); }
       try { reportCallPhase(); } catch (err) { log('call-phase error', err); }
+      // Only ever *maintains* an already-open window here: opening is gated on
+      // the user's setting, which only the main process knows, so main's poll
+      // is what opens one. This keeps the attached stream fresh and closes the
+      // window promptly while MeetLoaf is visible.
+      try {
+        if (window.__meetloafPopout.isOpen()) presentationTick(true);
+      } catch (err) { log('pop-out error', err); }
     });
   }
   new MutationObserver(schedule).observe(document.documentElement, {
@@ -192,5 +462,5 @@
     subtree: true
   });
   schedule();
-  log('content script ready, watching for settings tablist + call phase');
+  log('content script ready, watching for settings tablist, call phase + presentations');
 })();

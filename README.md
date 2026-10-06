@@ -137,7 +137,7 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
     "newMeeting": "Cmd+Shift+N",
     "leave": { "accelerator": "Cmd+W", "global": false }
   },
-  "window": { "width": 1200, "height": 800 }
+  "window": { "width": 1200, "height": 800, "popOutPresentation": true }
 }
 ```
 
@@ -147,9 +147,17 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
 
 Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/latest/api/accelerator). Each shortcut is `{ "accelerator": "…", "global": true|false }`; a bare string is treated as a global binding. Empty string = unbound. Restart the app after hand-editing.
 
-> **Note on Picture-in-Picture:** Meet's own *More options → Picture-in-picture* doesn't work inside MeetLoaf. It relies on the Document Picture-in-Picture API, which Electron doesn't render ([electron#39633](https://github.com/electron/electron/issues/39633)). The older per-video `requestPictureInPicture` API is wired up in Electron and renders for an ordinary video, but on Meet's remote WebRTC tiles it surfaces no window and the request never completes (the meeting keeps working — it doesn't crash). Both were tested and ruled out — MeetLoaf has no PiP. Use always-on-top (Settings → Window) to keep the call visible instead.
+> **Note on Picture-in-Picture:** Meet's own *More options → Picture-in-picture* doesn't work inside MeetLoaf. It relies on the Document Picture-in-Picture API, which Electron doesn't render ([electron#39633](https://github.com/electron/electron/issues/39633)). The older per-video `requestPictureInPicture` API is wired up in Electron and renders for an ordinary video, but on Meet's remote WebRTC tiles it surfaces no window and the request never completes (the meeting keeps working — it doesn't crash). Both were tested and ruled out — MeetLoaf has no PiP. Use always-on-top (Settings → Window), or the presentation pop-out below, to keep things visible instead.
 
-> **Note on the presentation pop-out (0.1.6, removed in 0.1.7):** a version that auto-detected a remote participant's screen share and split it into its own window shipped briefly and was pulled. The window mechanism itself worked — a `window.open()` popup from the Meet page is same-origin and shares its renderer, so the `<video>` inside it can take Meet's own `MediaStream` by reference, no re-capture needed. What didn't work was *detection*: inferring "this tile is a screen share" from generic video properties (`object-fit`, resolution, aspect ratio, relative tile size) produced false positives on join and wasn't reliable in practice. Anyone revisiting this should start by finding a stable marker in Meet's own markup rather than scoring heuristics.
+### Presentation pop-out
+
+When someone else starts presenting, MeetLoaf opens their shared screen in its own resizable window — drag it to a second display and the main window goes back to being the faces. Closing the window by hand dismisses it for that presentation; it comes back for the next one. The window remembers where you left it, and reopens there as long as that display is still attached.
+
+On by default. Turn it off in **Settings → Window → Pop out presentations**, or set `"window": { "popOutPresentation": false }`. **View → Pop Out Presentation** opens or closes it manually at any time.
+
+This is not Picture-in-Picture and doesn't go near the APIs in the note above. The window is opened by the Meet page itself, so it's same-origin and shares Meet's renderer — which means the `<video>` inside it can be handed Meet's own `MediaStream` by reference. Nothing is re-captured, re-encoded or mirrored, and it costs no extra bandwidth.
+
+Detection reads what Meet says about a tile rather than guessing from what its video looks like. (A 0.1.6 version scored videos on shape and size; it popped out cameras on join and was pulled in 0.1.7.) In Meet a presentation is its own tile, labelled *Name (Presentation)*, and only that tile carries the label. Your own screen share is excluded because its track is a local capture, not a remote one. Like the call-phase watcher, this relies on Meet's English labels.
 
 ### Setting up the Homebrew tap (one-time)
 
@@ -433,5 +441,6 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 - **Home Assistant automation never fires:** hit **Test** in Settings → Home Assistant — it reports the real HTTP status. `404` on a webhook means the ID is wrong or the automation was deleted; `401`/`403` in service-call mode means the token is bad. Also check the integration is actually **Enabled**.
 - **Home Assistant fires late, at connection instead of the waiting room:** that meeting had no waiting room — starting one with **New** or `meet://new` goes straight in. The event still fires; only the head start is lost.
 - **Home Assistant doesn't fire at the waiting room:** check **Fire "join" when** is set to `Waiting room`. If it still doesn't, Meet has probably renamed the pre-join button — open DevTools (View → Toggle Developer Tools) and look for `[meetloaf] phase:` lines. `unknown` where you expected `lobby` means the label changed; the patterns are at the top of the call-phase watcher in `app/main-inject.js`.
+- **Presentations don't pop out:** while someone is presenting, open DevTools (View → Toggle Developer Tools) and run `__meetloafPresentationDebug()`. It lists every tile with the labels the detector saw. If no tile shows `presentation: true`, Meet's wording has changed; the patterns are at the top of the pop-out section in `app/main-inject.js`. **View → Pop Out Presentation** opens the largest remote video by hand in the meantime.
 - **Something stays switched on after I hang up:** MeetLoaf should read Meet's post-hangup screen as `post_call` and fire leave. Check DevTools for `[meetloaf] phase: post_call`; if it says `unknown`, the *Rejoin* / *Return to home screen* labels changed.
 - **Update checker never prompts:** confirm `repository.url` in `app/package.json` points to a real GitHub repo (not `OWNER/REPO`).
