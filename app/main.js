@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -574,7 +574,7 @@ function describeFetchError(err, timeoutMs) {
   // permission rather than anything about Home Assistant — and the OS denies
   // it silently, so nothing else will ever say so.
   if (process.platform === 'darwin' && (!code || CONNECT_FAILURES.has(code))) {
-    return `${base} — if Home Assistant is on your LAN, check System Settings → Privacy & Security → Local Network and make sure MeetLoaf is allowed`;
+    return `${base} — if Home Assistant is on your LAN, check System Settings → Privacy & Security → Local Network, and any per-app firewall (LuLu, Little Snitch) for a rule covering MeetLoaf`;
   }
   return base;
 }
@@ -585,7 +585,14 @@ async function haSend(url, headers, body, { timeoutMs = 5000, attempts = 2 } = {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(url, {
+      // net.fetch, not the global fetch. They are not interchangeable here:
+      // net.fetch goes through Chromium's network stack, the global one through
+      // Node's sockets. On macOS the local-network permission is only granted
+      // to the Chromium path, so a Home Assistant on the LAN answers net.fetch
+      // and refuses Node with EHOSTUNREACH — but *only* when the app is
+      // launched normally. Launched from a terminal it inherits the terminal's
+      // own grant and both work, which is what made this take six days to find.
+      const res = await net.fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
