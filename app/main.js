@@ -105,6 +105,16 @@ const MODIFIER_ALIASES = {
   Shift: 'Shift'
 };
 
+// Punctuation keys saved by earlier versions, which wrote DOM event.code names
+// that Electron rejects. Translated on the way in so an existing binding starts
+// working on upgrade rather than staying silently dead.
+const LEGACY_KEY_TOKENS = {
+  Backquote: '`', Minus: '-', Equal: '=',
+  BracketLeft: '[', BracketRight: ']',
+  Backslash: '\\', Semicolon: ';', Quote: "'",
+  Comma: ',', Period: '.', Slash: '/'
+};
+
 function normalizeAccelerator(accel) {
   if (!accel) return '';
   const mods = new Set();
@@ -115,6 +125,7 @@ function normalizeAccelerator(accel) {
     else key = part;
   }
   if (!key) return '';
+  key = LEGACY_KEY_TOKENS[key] || key;
   return [...MODIFIER_ORDER.filter((m) => mods.has(m)), key].join('+');
 }
 
@@ -1594,10 +1605,14 @@ const INPUT_CODE_TO_KEY = (() => {
   for (let d = 0; d <= 9; d++) m[`Digit${d}`] = String(d);
   for (let f = 1; f <= 24; f++) m[`F${f}`] = `F${f}`;
   Object.assign(m, {
-    Backquote: 'Backquote', Minus: 'Minus', Equal: 'Equal',
-    BracketLeft: 'BracketLeft', BracketRight: 'BracketRight',
-    Backslash: 'Backslash', Semicolon: 'Semicolon', Quote: 'Quote',
-    Comma: 'Comma', Period: 'Period', Slash: 'Slash',
+    // Electron accelerators take the literal character for punctuation keys,
+    // not the DOM event.code name. Registering "Backquote" throws outright, so
+    // every punctuation binding silently failed at startup — visible only as a
+    // console warning nobody sees unless they run the app from a terminal.
+    Backquote: '`', Minus: '-', Equal: '=',
+    BracketLeft: '[', BracketRight: ']',
+    Backslash: '\\', Semicolon: ';', Quote: "'",
+    Comma: ',', Period: '.', Slash: '/',
     Space: 'Space', Enter: 'Enter', Tab: 'Tab',
     ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
     Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',

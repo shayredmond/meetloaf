@@ -423,7 +423,7 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 ## Troubleshooting
 
 - **"MeetLoaf is damaged and can't be opened"** on first launch: run `xattr -dr com.apple.quarantine /Applications/MeetLoaf.app`. See the install snippet at the top.
-- **Shortcuts don't fire:** some accelerators are taken by macOS/other apps. Check `Console.app` for "Shortcut unavailable" warnings, or pick different bindings.
+- **Shortcuts don't fire:** some accelerators are taken by macOS/other apps. Check `Console.app` for "Shortcut unavailable" warnings, or pick different bindings. Bindings on punctuation keys (`` ` ``, `-`, `[`, `;`, `/`, …) recorded before 0.2.3 were written in a form Electron rejects and never registered; 0.2.3 translates them on load, so they start working without re-recording.
 - **Mic/camera button clicks do nothing:** Meet occasionally changes aria-labels. Open DevTools (View → Toggle Developer Tools) and inspect the button.
 - **Firefox extension doesn't redirect:** confirm it's enabled (toolbar icon has no "off" badge); confirm `about:config` → `network.protocol-handler.external.meet` is `true`.
 - **Firefox "Launch Application" dialog every link:** tick "Remember my choice" the first time.
