@@ -16,5 +16,9 @@ contextBridge.exposeInMainWorld('meetloaf', {
   detectChrome: () => ipcRenderer.invoke('chrome:detect'),
   showChromeFolder: () => ipcRenderer.invoke('chrome:show-folder'),
   openChromeExtensions: () => ipcRenderer.invoke('chrome:open-extensions'),
-  testHomeAssistant: (which) => ipcRenderer.invoke('ha:test', which)
+  testHomeAssistant: (which) => ipcRenderer.invoke('ha:test', which),
+  getPermissions: () => ipcRenderer.invoke('permissions:get'),
+  requestPermission: (id) => ipcRenderer.invoke('permissions:request', id),
+  openPermissionSettings: (id) => ipcRenderer.invoke('permissions:open-settings', id),
+  testLocalNetwork: () => ipcRenderer.invoke('permissions:test-local-network')
 });

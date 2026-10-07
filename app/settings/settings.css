@@ -545,3 +545,27 @@ footer {
 }
 
 .status.visible { opacity: 1; }
+
+/* Permissions rows: label | actions, matching .routing-row. The dot carries the
+   state at a glance; the text beside it says the same thing for anyone who
+   can't rely on colour alone. */
+.permission-row { grid-template-columns: 1fr auto; }
+
+.perm-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+  background: #8e8e93;
+}
+.perm-dot.ok { background: #34c759; }
+.perm-dot.warn { background: #ff9f0a; }
+.perm-dot.bad { background: #ff3b30; }
+
+@media (prefers-color-scheme: dark) {
+  .perm-dot.ok { background: #30d158; }
+  .perm-dot.warn { background: #ffd60a; }
+  .perm-dot.bad { background: #ff453a; }
+}
