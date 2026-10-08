@@ -332,6 +332,15 @@ let autoOpenSuppressed = false;
 // 'closed' handler runs after whatever follows the call and can't be corrected
 // afterwards — it has to be told the reason in advance.
 let closingForShareEnd = false;
+// Meet's DOM churns while it moves a presentation back into the main window, so
+// the tile is missing for a poll or two straight after a re-dock — detection
+// needs a decoded frame and there isn't one yet. Treating that gap as "the
+// share ended" lifts the suppression and auto pop-out immediately undoes the
+// re-dock. Same churn EXIT_CONFIRM_MS exists for, so take the same approach and
+// require the share to stay gone. Several polls' worth, since one unlucky poll
+// landing in the gap is all it takes.
+const SHARE_GONE_MS = 6000;
+let shareGoneSince = 0;
 
 function presentationWindowOpen() {
   return !!(presentationWin && !presentationWin.isDestroyed());
@@ -386,9 +395,16 @@ async function presentationWindowLive() {
 // placeholder once a share ends. Close it — but only once we've seen a share in
 // it, so a window opened ahead of a presentation is left alone.
 function syncPresentationWindow(docked, popoutLive) {
+  // The share counts as live in either window; while it's popped out the main
+  // window has no tile at all, so `docked` alone would read as gone.
+  const shareLive = docked || popoutLive === true;
+  if (shareLive) shareGoneSince = 0;
+  else if (!shareGoneSince) shareGoneSince = Date.now();
+
   if (!presentationWindowOpen()) {
-    // Nothing popped out: once the share is over, let the next one pop out.
-    if (!docked) autoOpenSuppressed = false;
+    // Nothing popped out: once the share is really over — not just mid-re-dock
+    // — let the next one pop out.
+    if (!shareLive && Date.now() - shareGoneSince >= SHARE_GONE_MS) autoOpenSuppressed = false;
     return;
   }
   if (popoutLive === true) {
