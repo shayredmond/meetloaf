@@ -65,13 +65,13 @@ Same idea as macOS: SmartScreen's *"Windows protected your PC"* warning is trigg
 ### Ubuntu 22.04 / 24.04 LTS (x64)
 
 ```sh
-curl -L -o /tmp/MeetLoaf.deb https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-x64.deb
+curl -L -o /tmp/MeetLoaf.deb https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-amd64.deb
 sudo apt install /tmp/MeetLoaf.deb
 ```
 
 The `.deb` installs to `/opt/MeetLoaf`, puts `meetloaf` on your `PATH`, adds an app-grid entry, registers the `meet://` handler, and on 24.04 installs the AppArmor profile Electron needs there. Remove it with `sudo apt remove meetloaf`.
 
-Prefer not to install system-wide? `MeetLoaf-linux-x64.AppImage` is on the release page too — see **§ Linux** below.
+Prefer not to install system-wide? `MeetLoaf-linux-x86_64.AppImage` is on the release page too — see **§ Linux** below.
 
 MeetLoaf checks for updates on launch and from the **MeetLoaf → Check for Updates…** menu. What happens next depends on your platform:
 
@@ -106,7 +106,7 @@ Build locally with `cd app && npm install && npm run dist:win` → `app/dist/Mee
 MeetLoaf runs on Ubuntu 22.04 and 24.04 LTS (x64), on both Wayland (the 24.04 default) and X11. Other recent distros should work from the AppImage, but Ubuntu LTS is what's tested. Install the `.deb` with the snippet at the top of this README, or use the AppImage:
 
 ```sh
-curl -L -o ~/Applications/MeetLoaf.AppImage --create-dirs https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-x64.AppImage
+curl -L -o ~/Applications/MeetLoaf.AppImage --create-dirs https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-x86_64.AppImage
 chmod +x ~/Applications/MeetLoaf.AppImage
 ~/Applications/MeetLoaf.AppImage
 ```
@@ -122,7 +122,7 @@ Differences from macOS:
 - **Link routing:** there's no Velja on Linux either. Install the Firefox or Chrome extension (Settings → Routing). Ubuntu's Firefox is a snap and can't read files inside the app, so MeetLoaf copies the extension to `~/Downloads` before handing it over.
 - **Permissions:** Linux has no per-app camera or microphone permission outside snaps and flatpaks, so the Permissions panel shows them as unknown.
 
-Build locally on Linux with `cd app && npm install && npm run dist:linux` → `app/dist/MeetLoaf-linux-x64.deb` and `MeetLoaf-linux-x64.AppImage`. For `npm start`, run `npm run icon:win` once first. Despite the name, it's the cross-platform resvg script, and it generates the tray icon Linux uses.
+Build locally on Linux with `cd app && npm install && npm run dist:linux` → `app/dist/MeetLoaf-linux-amd64.deb` and `MeetLoaf-linux-x86_64.AppImage`. For `npm start`, run `npm run icon:win` once first. Despite the name, it's the cross-platform resvg script, and it generates the tray icon Linux uses.
 
 ---
 
