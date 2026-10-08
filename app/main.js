@@ -304,6 +304,13 @@ function popOutEnabled() {
   return config.window?.popOutPresentation !== false;
 }
 
+// Auto pop-out applies only when there's nothing popped out already and the
+// user hasn't just re-docked by hand.
+function autoOpenWanted() {
+  return popOutEnabled() && phase === 'in_call' &&
+    !presentationWindowOpen() && !autoOpenSuppressed;
+}
+
 
 
 
@@ -316,6 +323,15 @@ let presentationWin = null;
 // Whether a share was ever live while this window was open. Without it, a
 // window opened before anyone shares would be closed on the very next poll.
 let presentationWinSawShare = false;
+// Set when the user re-docks by hand. Popping the presentation out removes its
+// tile from the main window, so a re-dock puts the tile straight back and auto
+// pop-out would grab it again on the next poll, undoing the thing they asked
+// for. Cleared when the share ends, so the next one pops out normally.
+let autoOpenSuppressed = false;
+// Why the window is closing. BrowserWindow.close() is asynchronous, so the
+// 'closed' handler runs after whatever follows the call and can't be corrected
+// afterwards — it has to be told the reason in advance.
+let closingForShareEnd = false;
 
 function presentationWindowOpen() {
   return !!(presentationWin && !presentationWin.isDestroyed());
@@ -329,24 +345,62 @@ function adoptPresentationWindow(win) {
   presentationWin = win;
   presentationWinSawShare = false;
   win.on('closed', () => {
-    if (presentationWin === win) {
-      presentationWin = null;
-      presentationWinSawShare = false;
-    }
+    if (presentationWin !== win) return;
+    presentationWin = null;
+    presentationWinSawShare = false;
+    // A close we didn't initiate is a decision to have it docked — including
+    // the window's own close button, which would otherwise be undone by the
+    // next poll. Closing it ourselves because the share ended is not.
+    autoOpenSuppressed = !closingForShareEnd;
+    closingForShareEnd = false;
   });
 }
 
+// Whether Meet's window is actually showing a presentation. This has to be
+// asked of that window rather than inferred from the main one: popping out
+// removes the tile from the main window, so "no tile" means the pop-out worked
+// just as often as it means the share ended. Looks for live video rather than
+// the "No one is sharing their screen" text, which Meet localises.
+// Returns null when the window can't answer — mid-load or gone — so callers
+// can tell "not presenting" apart from "don't know".
+async function presentationWindowLive() {
+  if (!presentationWindowOpen()) return null;
+  try {
+    return await presentationWin.webContents.executeJavaScript(`
+      (() => {
+        for (const v of document.querySelectorAll('video')) {
+          if (!v.videoWidth || !v.videoHeight) continue;
+          const s = v.srcObject;
+          if (!s || typeof s.getVideoTracks !== 'function') continue;
+          if (s.getVideoTracks().some((t) => t.readyState === 'live')) return true;
+        }
+        return false;
+      })()
+    `);
+  } catch {
+    return null;
+  }
+}
+
 // Meet leaves its window up showing the "No one is sharing their screen"
-// placeholder once a share ends. Close it — but only if we actually saw the
-// share, so a window opened ahead of a presentation is left alone.
-function syncPresentationWindow(presenting) {
-  if (!presentationWindowOpen()) return;
-  if (presenting) {
+// placeholder once a share ends. Close it — but only once we've seen a share in
+// it, so a window opened ahead of a presentation is left alone.
+function syncPresentationWindow(docked, popoutLive) {
+  if (!presentationWindowOpen()) {
+    // Nothing popped out: once the share is over, let the next one pop out.
+    if (!docked) autoOpenSuppressed = false;
+    return;
+  }
+  if (popoutLive === true) {
     presentationWinSawShare = true;
     return;
   }
+  // Unknown, or the presentation is simply docked again — either way there's
+  // nothing to conclude about the share having ended.
+  if (popoutLive === null || docked) return;
   if (!presentationWinSawShare) return;
   console.log('[meetloaf] share ended, closing the empty presentation window');
+  closingForShareEnd = true;
   presentationWin.close();
 }
 
@@ -356,9 +410,12 @@ function syncPresentationWindow(presenting) {
 // the point is to override it in either direction.
 function togglePresentationWindow() {
   if (presentationWindowOpen()) {
+    // The 'closed' handler suppresses auto pop-out for us.
+    closingForShareEnd = false;
     presentationWin.close();
     return;
   }
+  autoOpenSuppressed = false;
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.executeJavaScript(
     'window.__meetloafPopout ? window.__meetloafPopout.open() : false'
@@ -466,7 +523,7 @@ async function pollPhase() {
   // page, and this is also what catches "navigated away while hidden".
   if (!isInActiveMeeting()) {
     observePhase('away', 'poll');
-    syncPresentationWindow(false);
+    syncPresentationWindow(false, await presentationWindowLive());
     return;
   }
   try {
@@ -478,11 +535,11 @@ async function pollPhase() {
         phase: typeof window.__meetloafCallPhase === 'function'
           ? window.__meetloafCallPhase() : null,
         presenting: typeof window.__meetloafPresentationTick === 'function'
-          ? window.__meetloafPresentationTick(${popOutEnabled() && phase === 'in_call'}) : false
+          ? window.__meetloafPresentationTick(${autoOpenWanted()}) : false
       }))()
     `);
     if (state && typeof state.phase === 'string') observePhase(state.phase, 'poll');
-    if (state) syncPresentationWindow(!!state.presenting);
+    if (state) syncPresentationWindow(!!state.presenting, await presentationWindowLive());
   } catch {
     // Page mid-navigation or renderer gone — the next tick will catch up.
   }
