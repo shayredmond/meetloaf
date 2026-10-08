@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, screen } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -403,7 +403,6 @@ function commitPhase(next, reason) {
     inMeeting = connected;
     applyWindowPrefs();
   }
-  if (!connected) closePresentationWindow(`phase ${next}`);
 
   const present = phaseIsPresent(next);
   if (present !== haPresent) {
@@ -1026,12 +1025,6 @@ function createWindow() {
   // `did-navigate-in-page` (Meet's SPA route changes) are needed.
   mainWindow.webContents.on('did-navigate', checkMeetingState);
   mainWindow.webContents.on('did-navigate-in-page', checkMeetingState);
-  // A full page load replaces the renderer that owns the pop-out, leaving a
-  // window with a dead stream behind. Worse, the freshly injected script has
-  // no handle on it and would open a second one — so close it here. Reloading
-  // straight back into the same meeting isn't a phase change, so the phase
-  // machinery never sees this case.
-  mainWindow.webContents.on('did-navigate', () => closePresentationWindow('page load'));
   // A crashed/killed renderer means the call is over even though no navigation
   // happened — without this the "leave" event would never fire.
   mainWindow.webContents.on('render-process-gone', () => {

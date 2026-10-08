@@ -268,9 +268,11 @@
     return out;
   }
 
-  function presentationStream() {
-    const hit = inspectTiles().find((t) => t.presentation && t.stream);
-    return hit ? hit.stream : null;
+  // Someone else's presentation, carrying a live remote track: the same test
+  // the old stream hand-off used, now returning the tile itself because the
+  // window is Meet's to open and all we need is its control.
+  function presentationTile() {
+    return inspectTiles().find((t) => t.presentation && t.stream) || null;
   }
 
   const OPEN_IN_WINDOW_RE = /open in new window/i;
@@ -281,7 +283,7 @@
   let lastControlMissing = false;
 
   function findOpenControl(tile) {
-    const scopes = [tile ? tileScope(tile) : null, document].filter(Boolean);
+    const scopes = [tile ? tileScope(tile.tile) : null, document].filter(Boolean);
     for (const scope of scopes) {
       for (const el of scope.querySelectorAll('[role="button"], button')) {
         const label = (el.getAttribute('aria-label') || el.textContent || '').trim();
