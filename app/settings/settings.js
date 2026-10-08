@@ -296,6 +296,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // Pop out presentations — same `window` config section as the mode above.
+  const popOutBtn = document.getElementById('popOutPresentation');
+  if (popOutBtn) {
+    const popOutFromCfg = (w) => w?.popOutPresentation !== false;
+    popOutBtn.classList.toggle('checked', popOutFromCfg(cfg.window));
+    popOutBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const next = !popOutBtn.classList.contains('checked');
+      popOutBtn.classList.toggle('checked', next);
+      state.raw.window = { ...(state.raw.window || {}), popOutPresentation: next };
+      persistRaw();
+    });
+  }
+
   // Permissions tab. Rows come from the main process, which decides what
   // applies to this platform — the renderer only draws what it's handed, so
   // there's one place that knows Windows has no Local Network permission.

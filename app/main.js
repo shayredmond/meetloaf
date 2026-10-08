@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, screen } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -67,6 +67,12 @@ const MEET_INJECTION = fs.readFileSync(path.join(__dirname, 'main-inject.js'), '
 let mainWindow = null;
 let settingsWindow = null;
 let welcomeWindow = null;
+// The popped-out presentation viewer. Created by the Meet page itself via
+// window.open() (see the pop-out section of main-inject.js) rather than by us,
+// because only a window opened that way is same-origin with Meet and can be
+// handed a live MediaStream by reference. We adopt it here to give it window
+// chrome, position and lifetime.
+let presentationWindow = null;
 let tray = null;
 let inMeeting = false;
 // A meet:// deep link can arrive before the main window exists (cold start,
@@ -127,6 +133,37 @@ function normalizeAccelerator(accel) {
   if (!key) return '';
   key = LEGACY_KEY_TOKENS[key] || key;
   return [...MODIFIER_ORDER.filter((m) => mods.has(m)), key].join('+');
+}
+
+// Window preferences. `popOutPresentation` defaults on — only an explicit
+// false disables it — so the behavior appears for existing configs too.
+const WINDOW_DEFAULTS = {
+  width: 1200,
+  height: 800,
+  alwaysOnTop: false,
+  popOutPresentation: true
+};
+
+function normalizeWindow(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const out = { ...WINDOW_DEFAULTS };
+  if (Number.isFinite(src.width) && src.width > 0) out.width = Math.round(src.width);
+  if (Number.isFinite(src.height) && src.height > 0) out.height = Math.round(src.height);
+  out.alwaysOnTop = src.alwaysOnTop === true;
+  out.popOutPresentation = src.popOutPresentation !== false;
+  // Where the presentation window was last left. Remembered because the whole
+  // point of the feature is putting the shared screen on a second display, and
+  // having to drag it there every meeting would defeat it.
+  const b = src.presentationBounds;
+  if (b && typeof b === 'object' && Number.isFinite(b.width) && Number.isFinite(b.height)) {
+    out.presentationBounds = {
+      x: Number.isFinite(b.x) ? Math.round(b.x) : undefined,
+      y: Number.isFinite(b.y) ? Math.round(b.y) : undefined,
+      width: Math.max(320, Math.round(b.width)),
+      height: Math.max(200, Math.round(b.height))
+    };
+  }
+  return out;
 }
 
 // Shortcuts used to be stored as bare accelerator strings; now each is
@@ -218,6 +255,7 @@ function loadConfig() {
     config = {
       ...config,
       ...parsed,
+      window: normalizeWindow(parsed.window),
       shortcuts: normalizeShortcuts(parsed.shortcuts),
       homeAssistant: normalizeHomeAssistant(parsed.homeAssistant)
     };
@@ -233,6 +271,7 @@ function saveConfig(next) {
     config = {
       ...config,
       ...next,
+      window: normalizeWindow(next.window),
       shortcuts: normalizeShortcuts(next.shortcuts),
       homeAssistant: normalizeHomeAssistant(next.homeAssistant)
     };
@@ -265,7 +304,108 @@ function applyWindowPrefs() {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.setAlwaysOnTop(aot, 'floating', 2);
     }
+    if (presentationWindow && !presentationWindow.isDestroyed()) {
+      presentationWindow.setAlwaysOnTop(aot, 'floating', 1);
+    }
   }
+}
+
+// ─── Presentation pop-out window ───────────────────────────────────────────
+//
+// The Meet page opens this window itself, via window.open() from the injected
+// script. That's not incidental: only a window opened that way is same-origin
+// with Meet and shares its renderer, which is what lets a <video> inside it be
+// handed Meet's own MediaStream by reference. Nothing is re-captured or
+// mirrored. Everything below is about adopting that window afterwards and
+// giving it a sensible life — chrome, remembered bounds, always-on-top to
+// match the main window, and a clean shutdown when the call ends.
+const PRESENTATION_FRAME = 'meetloaf-presentation';
+
+function popOutEnabled() {
+  return config.window?.popOutPresentation !== false;
+}
+
+// A remembered position is only worth restoring if the display it was on is
+// still attached — unplugging the second monitor would otherwise strand the
+// window somewhere the user can't reach it.
+function boundsOnSomeDisplay(b) {
+  if (!b || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return false;
+  return screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width && b.x + b.width > a.x &&
+           b.y < a.y + a.height && b.y + b.height > a.y;
+  });
+}
+
+function presentationWindowOptions() {
+  const saved = config.window?.presentationBounds;
+  const opts = {
+    width: saved?.width || 1024,
+    height: saved?.height || 640,
+    minWidth: 320,
+    minHeight: 200,
+    title: 'Presentation',
+    backgroundColor: '#000000',
+    ...(IS_MAC ? {} : { autoHideMenuBar: true })
+    // webPreferences is deliberately not overridden: the window has to stay in
+    // the opener's process and origin or the stream hand-off breaks.
+  };
+  if (boundsOnSomeDisplay(saved)) {
+    opts.x = saved.x;
+    opts.y = saved.y;
+  }
+  return opts;
+}
+
+function rememberPresentationBounds() {
+  if (!presentationWindow || presentationWindow.isDestroyed()) return;
+  const b = presentationWindow.getBounds();
+  const prev = config.window?.presentationBounds;
+  if (prev && prev.x === b.x && prev.y === b.y &&
+      prev.width === b.width && prev.height === b.height) return;
+  saveConfig({ ...config, window: { ...config.window, presentationBounds: b } });
+}
+
+function adoptPresentationWindow(win) {
+  presentationWindow = win;
+  const aot = !!(config.window && config.window.alwaysOnTop) && inMeeting;
+  win.setAlwaysOnTop(aot, 'floating', 1);
+  win.on('close', rememberPresentationBounds);
+  win.on('closed', () => { presentationWindow = null; });
+  console.log('[meetloaf] presentation popped out');
+}
+
+// Closing from this side (the call ended, the renderer was replaced) instead
+// of from the page. The page runs its own state machine, so it has to be told
+// to drop the handle — otherwise it reads the vanished window as "the user
+// dismissed this" and won't reopen for the next presenter.
+function closePresentationWindow(reason) {
+  if (!presentationWindow || presentationWindow.isDestroyed()) return;
+  console.log(`[meetloaf] closing presentation window (${reason})`);
+  rememberPresentationBounds();
+  presentationWindow.destroy();
+  presentationWindow = null;
+  const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+  if (wc && !wc.isCrashed()) {
+    wc.executeJavaScript('window.__meetloafPopout && window.__meetloafPopout.reset()')
+      .catch(() => {});
+  }
+}
+
+// Menu command. Deliberately independent of auto-detection: this is the
+// escape hatch for when Meet's markup moved and detection didn't fire.
+function togglePresentationWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.executeJavaScript(`
+    (() => {
+      const api = window.__meetloafPopout;
+      if (!api) return null;
+      if (api.isOpen()) { api.close(); return true; }
+      return api.open();
+    })()
+  `).then((ok) => {
+    if (ok === false) console.log('[meetloaf] no remote video to pop out');
+  }).catch(() => {});
 }
 
 // Confirmation windows for a phase change. Moving *towards* being present
@@ -352,6 +492,7 @@ function commitPhase(next, reason) {
     inMeeting = connected;
     applyWindowPrefs();
   }
+  if (!connected) closePresentationWindow(`phase ${next}`);
 
   const present = phaseIsPresent(next);
   if (present !== haPresent) {
@@ -370,10 +511,18 @@ async function pollPhase() {
     return;
   }
   try {
-    const raw = await mainWindow.webContents.executeJavaScript(
-      'typeof window.__meetloafCallPhase === "function" ? window.__meetloafCallPhase() : null'
-    );
-    if (typeof raw === 'string') observePhase(raw, 'poll');
+    // The pop-out rides on this poll rather than a timer of its own: it's the
+    // only clock that keeps full rate while MeetLoaf is hidden in the tray,
+    // which is exactly when a presentation starting matters most.
+    const state = await mainWindow.webContents.executeJavaScript(`
+      (() => ({
+        phase: typeof window.__meetloafCallPhase === 'function'
+          ? window.__meetloafCallPhase() : null,
+        presenting: typeof window.__meetloafPresentationTick === 'function'
+          ? window.__meetloafPresentationTick(${popOutEnabled() && phase === 'in_call'}) : false
+      }))()
+    `);
+    if (state && typeof state.phase === 'string') observePhase(state.phase, 'poll');
   } catch {
     // Page mid-navigation or renderer gone — the next tick will catch up.
   }
@@ -962,6 +1111,12 @@ function createWindow() {
   // `did-navigate-in-page` (Meet's SPA route changes) are needed.
   mainWindow.webContents.on('did-navigate', checkMeetingState);
   mainWindow.webContents.on('did-navigate-in-page', checkMeetingState);
+  // A full page load replaces the renderer that owns the pop-out, leaving a
+  // window with a dead stream behind. Worse, the freshly injected script has
+  // no handle on it and would open a second one — so close it here. Reloading
+  // straight back into the same meeting isn't a phase change, so the phase
+  // machinery never sees this case.
+  mainWindow.webContents.on('did-navigate', () => closePresentationWindow('page load'));
   // A crashed/killed renderer means the call is over even though no navigation
   // happened — without this the "leave" event would never fire.
   mainWindow.webContents.on('render-process-gone', () => {
@@ -1022,9 +1177,17 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // Nothing is feeding the viewer any more; an orphaned black window would
+    // just be confusing.
+    closePresentationWindow('main window closed');
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // Our own presentation viewer, opened by the injected script. Named so we
+    // can tell it apart from Meet's own transient about:blank popups below.
+    if (frameName === PRESENTATION_FRAME) {
+      return { action: 'allow', overrideBrowserWindowOptions: presentationWindowOptions() };
+    }
     // Google auth popups stay in-app.
     if (url.startsWith('https://accounts.google.com')) {
       return { action: 'allow' };
@@ -1039,6 +1202,10 @@ function createWindow() {
     // Real external links go to the user's browser.
     shell.openExternal(url).catch(() => {});
     return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('did-create-window', (win, { frameName }) => {
+    if (frameName === PRESENTATION_FRAME) adoptPresentationWindow(win);
   });
 }
 
@@ -1706,6 +1873,8 @@ function buildMenu() {
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
+        { label: 'Pop Out Presentation', click: () => togglePresentationWindow() },
+        { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
     },
@@ -1762,6 +1931,10 @@ function attachLocalShortcuts(webContents) {
   webContents.on('before-input-event', (event, input) => {
     if (recordingShortcut) return;
     if (input.type !== 'keyDown') return;
+    // The popped-out presentation is a plain viewer: Cmd+W there has to close
+    // that window, not leave the call.
+    if (presentationWindow && !presentationWindow.isDestroyed() &&
+        presentationWindow.webContents === webContents) return;
     const accel = accelFromInput(input);
     if (!accel) return;
     const action = localShortcutMap.get(accel);
