@@ -29,6 +29,11 @@ const BUNDLED_CONFIG = path.join(__dirname, 'config.json');
 // dir (which doesn't move). Browser session/cache always stays in userData.
 const DEFAULT_CONFIG_DIR = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'meetloaf');
 const DEFAULT_CONFIG_PATH = path.join(DEFAULT_CONFIG_DIR, 'config.json');
+// On Linux Electron's userData is ~/.config/<name> — the very folder above —
+// so cookies and caches would land in the dotfiles dir. Give the browser
+// state its own folder, named as on macOS/Windows. Must run before anything
+// reads userData.
+if (IS_LINUX) app.setPath('userData', path.join(app.getPath('appData'), 'MeetLoaf'));
 const POINTER_FILE = path.join(app.getPath('userData'), 'config-path.txt');
 // Legacy: pre-XDG-relocation config used to live alongside Electron's
 // userData. We migrate on first launch so existing settings aren't lost.
