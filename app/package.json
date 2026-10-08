@@ -1,8 +1,9 @@
 {
   "name": "meetloaf",
   "version": "0.2.4",
-  "description": "Standalone Google Meet app for macOS and Windows",
+  "description": "Standalone Google Meet app for macOS, Windows and Linux",
   "main": "main.js",
+  "desktopName": "meetloaf.desktop",
   "author": "Shay Redmond",
   "license": "MIT",
   "repository": {
@@ -14,7 +15,8 @@
     "icon": "./scripts/build-icon.sh",
     "icon:win": "node scripts/build-icon-win.js",
     "dist": "./scripts/build-dmg.sh",
-    "dist:win": "node scripts/build-icon-win.js && electron-builder --win --x64 --arm64 --publish never"
+    "dist:win": "node scripts/build-icon-win.js && electron-builder --win --x64 --arm64 --publish never",
+    "dist:linux": "node scripts/build-icon-win.js && electron-builder --linux --x64 --publish never"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
@@ -74,6 +76,41 @@
           ]
         }
       ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icon.png",
+      "executableName": "meetloaf",
+      "category": "Network",
+      "synopsis": "Standalone Google Meet app",
+      "maintainer": "Shay Redmond",
+      "artifactName": "${productName}-linux-${arch}.${ext}",
+      "protocols": [
+        {
+          "name": "Google Meet",
+          "schemes": [
+            "meet"
+          ]
+        }
+      ],
+      "desktop": {
+        "entry": {
+          "Keywords": "meet;google;video;call;"
+        }
+      }
     },
     "nsis": {
       "oneClick": true,
