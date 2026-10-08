@@ -2030,19 +2030,36 @@ function registerShortcuts() {
     }
   };
 
-  bind(s.mute, () => clickByAriaLabel('turn (on|off) microphone'));
-  bind(s.camera, () => clickByAriaLabel('turn (on|off) camera'));
-  bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
-  bind(s.toggleWindow, () => toggleMainWindow());
-  bind(s.newMeeting, () => startInstantMeeting());
-  bind(s.leave, () => clickByAriaLabel('leave call'));
+  for (const [name, fn] of Object.entries(SHORTCUT_ACTIONS)) bind(s[name], fn);
 }
+
+// Keyed by config.shortcuts name. Also reachable as `meetloaf --shortcut=<name>`
+// (see second-instance), which is how hotkeys work where globalShortcut can't:
+// on GNOME 50 Wayland the GlobalShortcuts portal rejects Electron's bind
+// (electron/electron#51875), so the desktop's own custom shortcuts run the
+// command instead.
+const SHORTCUT_ACTIONS = {
+  mute: () => clickByAriaLabel('turn (on|off) microphone'),
+  camera: () => clickByAriaLabel('turn (on|off) camera'),
+  hand: () => clickByAriaLabel('(raise|lower) hand'),
+  toggleWindow: () => toggleMainWindow(),
+  newMeeting: () => startInstantMeeting(),
+  leave: () => clickByAriaLabel('leave call')
+};
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
+    // A hotkey fired from outside: act without raising the window, or muting
+    // from another app would yank focus into the meeting.
+    const shortcutArg = argv.find((a) => a.startsWith('--shortcut='));
+    if (shortcutArg) {
+      const action = SHORTCUT_ACTIONS[shortcutArg.slice('--shortcut='.length)];
+      if (action) action();
+      return;
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
