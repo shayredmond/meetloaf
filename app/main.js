@@ -536,6 +536,10 @@ function checkMeetingState() {
     if (phase !== 'away') commitPhase('away', 'navigation');
     return;
   }
+  // Nothing behind a meeting is worth going back to, and a stray back action —
+  // a mouse side button, a remapped shortcut, a swipe — would hang up the call.
+  // Emptying the history makes every one of them a no-op, whatever sent it.
+  mainWindow.webContents.navigationHistory.clear();
   // We're on a meeting URL — if a link was asked for, this is it. Runs before
   // the phase work because the link is worth having at the green room, before
   // you've joined.
