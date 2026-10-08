@@ -293,15 +293,6 @@
   // normal and must not make the window flap.
   const POPOUT_CLOSE_GRACE_MS = 5000;
 
-  const POPOUT_DOC = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Presentation</title>
-<meta name="color-scheme" content="dark">
-<style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
-</style></head>
-<body><video id="meetloaf-presentation" autoplay playsinline muted></video></body></html>`;
-
   let popout = null;
   let popoutVideo = null;
   // Set when the user closes the window by hand. Cleared once the presentation
@@ -310,7 +301,50 @@
   // A manual pop-out (View menu) shows whatever the user asked for, so the
   // tick mustn't close it just because detection doesn't agree.
   let popoutManual = false;
+  let popoutRebuilds = 0;
   let lastSeenAt = 0;
+
+  // The window is opened empty and furnished afterwards, every tick, rather
+  // than written once at open time.
+  //
+  // document.write() into a just-opened window races the about:blank
+  // navigation: the write lands, then the real document commits and replaces
+  // it. That left a window stuck at readyState "loading" with no <video> in it
+  // — open, black, and permanently empty, because nothing ever looked again.
+  //
+  // Building the DOM is not enough on its own either; the same replacement
+  // would discard it. What makes this reliable is that it re-checks on every
+  // tick and rebuilds whenever the element has gone, so losing the race costs
+  // one tick instead of the whole feature.
+  function ensurePopoutVideo() {
+    if (!popout || popout.closed) return null;
+    let doc;
+    try { doc = popout.document; } catch { return null; }
+    // Mid-navigation: body isn't there yet. The next tick will find it.
+    if (!doc || !doc.body) return null;
+
+    let v = doc.getElementById('meetloaf-presentation');
+    if (!v) {
+      // Counted so a recurrence is visible in __meetloafPresentationDebug()
+      // rather than needing another live capture to find. One rebuild is the
+      // race being lost and repaired; a climbing count means something is
+      // clearing the document repeatedly.
+      popoutRebuilds += 1;
+      if (popoutRebuilds > 1) log('pop-out video rebuilt', popoutRebuilds, 'times');
+      doc.title = 'Presentation';
+      if (doc.documentElement) doc.documentElement.style.cssText = 'height:100%';
+      doc.body.style.cssText = 'margin:0;height:100%;background:#000;overflow:hidden';
+      v = doc.createElement('video');
+      v.id = 'meetloaf-presentation';
+      v.autoplay = true;
+      v.muted = true;
+      v.playsInline = true;
+      v.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;background:#000';
+      doc.body.appendChild(v);
+    }
+    popoutVideo = v;
+    return v;
+  }
 
   function openPopout() {
     if (popout && !popout.closed) return true;
@@ -319,10 +353,9 @@
       log('pop-out window was blocked');
       return false;
     }
-    popout.document.open();
-    popout.document.write(POPOUT_DOC);
-    popout.document.close();
-    popoutVideo = popout.document.getElementById('meetloaf-presentation');
+    popoutVideo = null;
+    // May be too early — ensurePopoutVideo retries on each tick.
+    ensurePopoutVideo();
     return true;
   }
 
@@ -341,9 +374,10 @@
   // every tick: Meet swaps elements and streams freely, and this no-ops when
   // nothing changed.
   function attach(stream) {
-    if (!popoutVideo || !stream || popoutVideo.srcObject === stream) return;
-    popoutVideo.srcObject = stream;
-    const played = popoutVideo.play();
+    const v = ensurePopoutVideo();
+    if (!v || !stream || v.srcObject === stream) return;
+    v.srcObject = stream;
+    const played = v.play();
     if (played && typeof played.catch === 'function') played.catch(() => {});
   }
 
@@ -388,6 +422,20 @@
       open: !!(popout && !popout.closed),
       manual: popoutManual,
       dismissed: popoutDismissed,
+      popup: (() => {
+        if (!popout || popout.closed) return null;
+        let doc;
+        try { doc = popout.document; } catch { return { unreachable: true }; }
+        const v = doc && doc.getElementById('meetloaf-presentation');
+        return {
+          docState: doc && doc.readyState,
+          rebuilds: popoutRebuilds,
+          videoFound: !!v,
+          hasStream: !!(v && v.srcObject),
+          size: v ? `${v.videoWidth}x${v.videoHeight}` : null,
+          paused: v ? v.paused : null
+        };
+      })(),
       tiles: inspectTiles().map((t) => ({
         id: t.id,
         presentation: t.presentation,
