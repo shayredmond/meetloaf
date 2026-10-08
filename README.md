@@ -62,7 +62,7 @@ Same idea as macOS: SmartScreen's *"Windows protected your PC"* warning is trigg
 > Unblock-File .\MeetLoaf-Setup.exe
 > ```
 
-### Ubuntu 22.04 / 24.04 LTS (x64)
+### Ubuntu LTS (x64)
 
 ```sh
 curl -L -o /tmp/MeetLoaf.deb https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-amd64.deb
@@ -103,7 +103,7 @@ Build locally with `cd app && npm install && npm run dist:win` → `app/dist/Mee
 
 ## Linux
 
-MeetLoaf runs on Ubuntu 22.04 and 24.04 LTS (x64), on both Wayland (the 24.04 default) and X11. Other recent distros should work from the AppImage, but Ubuntu LTS is what's tested. Install the `.deb` with the snippet at the top of this README, or use the AppImage:
+MeetLoaf runs on Ubuntu LTS (x64). It's tested on 26.04 (GNOME 50, Wayland), and built on 22.04 so the same packages also install on 22.04 and 24.04. Other recent distros should work from the AppImage. Install the `.deb` with the snippet at the top of this README, or use the AppImage:
 
 ```sh
 curl -L -o ~/Applications/MeetLoaf.AppImage --create-dirs https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-x86_64.AppImage
@@ -116,7 +116,16 @@ AppImages need FUSE 2: `sudo apt install libfuse2t64` on 24.04 (`libfuse2` on 22
 Differences from macOS:
 
 - **Shortcuts** use Ctrl where macOS uses ⌘, as on Windows.
-- **Global hotkeys on Wayland** go through the desktop's GlobalShortcuts portal. GNOME asks once to approve MeetLoaf's shortcuts, and lists them under *Settings → Keyboard → View and Customise Shortcuts → Applications*. On X11 they're grabbed directly, as on Windows.
+- **Global hotkeys on Wayland don't register from inside the app.** On GNOME 50, every `globalShortcut.register()` fails ([electron#51875](https://github.com/electron/electron/issues/51875); still failing on Electron 44.7). MeetLoaf logs `Shortcut unavailable` for each one. Bind them in GNOME instead: every action can be triggered by running `meetloaf --shortcut=<name>` (`mute`, `camera`, `hand`, `toggleWindow`, `newMeeting`, `leave`). The running app performs it without raising its window. Add one under *Settings → Keyboard → View and Customise Shortcuts → Custom Shortcuts*, or from a terminal:
+  ```sh
+  p=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/meetloaf-mute/
+  s=org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$p
+  gsettings set $s name 'MeetLoaf: mute'
+  gsettings set $s command 'meetloaf --shortcut=mute'
+  gsettings set $s binding '<Control><Alt>m'
+  # then append "$p" to: gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
+  ```
+  Pick combos that are free system-wide: a GNOME binding fires in every app, so `Ctrl+W`-style keys would break other apps. On X11, MeetLoaf's own global shortcuts work as on Windows.
 - **Screen sharing on Wayland** uses the desktop's own picker (the xdg-desktop-portal dialog), so there's no MeetLoaf picker. On X11 MeetLoaf shows its own picker, as on Windows. Sharing system audio isn't supported on Linux.
 - **Tray icon** needs a desktop that shows StatusNotifier icons. Ubuntu's default session does, via the built-in AppIndicator extension. Clicking it opens the menu, and **Show / Hide MeetLoaf** is the first item. Closing the window hides it to the tray; quit from the tray menu. Without a tray, launching MeetLoaf again brings the window back.
 - **Link routing:** there's no Velja on Linux either. Install the Firefox or Chrome extension (Settings → Routing). Ubuntu's Firefox is a snap and can't read files inside the app, so MeetLoaf copies the extension to `~/Downloads` before handing it over.
