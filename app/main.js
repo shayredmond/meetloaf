@@ -88,6 +88,7 @@ const DEFAULT_SHORTCUTS = {
   hand: { accelerator: '', global: true },
   toggleWindow: { accelerator: '', global: true },
   newMeeting: { accelerator: '', global: true },
+  presentation: { accelerator: '', global: true },
   leave: { accelerator: 'CmdOrCtrl+W', global: false }
 };
 
@@ -308,9 +309,56 @@ function popOutEnabled() {
 
 
 
-// Menu command. Asks Meet to open its own presentation window — the same
-// control the user would click on the tile.
+// Meet's own presentation window. We need a handle on it for two things it
+// won't do itself: re-docking on request, and clearing the "No one is sharing
+// their screen" placeholder it leaves behind when a share ends.
+let presentationWin = null;
+// Whether a share was ever live while this window was open. Without it, a
+// window opened before anyone shares would be closed on the very next poll.
+let presentationWinSawShare = false;
+
+function presentationWindowOpen() {
+  return !!(presentationWin && !presentationWin.isDestroyed());
+}
+
+// Identifying it by title would mean matching "Presentation Window", which Meet
+// localises. During a call the only child windows are the auth popup and this
+// one, so the newest non-auth child is it — and if a transient popup does slip
+// through, it closes itself and hands the reference back.
+function adoptPresentationWindow(win) {
+  presentationWin = win;
+  presentationWinSawShare = false;
+  win.on('closed', () => {
+    if (presentationWin === win) {
+      presentationWin = null;
+      presentationWinSawShare = false;
+    }
+  });
+}
+
+// Meet leaves its window up showing the "No one is sharing their screen"
+// placeholder once a share ends. Close it — but only if we actually saw the
+// share, so a window opened ahead of a presentation is left alone.
+function syncPresentationWindow(presenting) {
+  if (!presentationWindowOpen()) return;
+  if (presenting) {
+    presentationWinSawShare = true;
+    return;
+  }
+  if (!presentationWinSawShare) return;
+  console.log('[meetloaf] share ended, closing the empty presentation window');
+  presentationWin.close();
+}
+
+// Menu command and shortcut, and a genuine toggle: closing Meet's window is how
+// you re-dock, because Meet puts the presentation back in the main window when
+// its popup goes away. Deliberately independent of the auto pop-out setting —
+// the point is to override it in either direction.
 function togglePresentationWindow() {
+  if (presentationWindowOpen()) {
+    presentationWin.close();
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.executeJavaScript(
     'window.__meetloafPopout ? window.__meetloafPopout.open() : false'
@@ -418,6 +466,7 @@ async function pollPhase() {
   // page, and this is also what catches "navigated away while hidden".
   if (!isInActiveMeeting()) {
     observePhase('away', 'poll');
+    syncPresentationWindow(false);
     return;
   }
   try {
@@ -433,6 +482,7 @@ async function pollPhase() {
       }))()
     `);
     if (state && typeof state.phase === 'string') observePhase(state.phase, 'poll');
+    if (state) syncPresentationWindow(!!state.presenting);
   } catch {
     // Page mid-navigation or renderer gone — the next tick will catch up.
   }
@@ -1087,6 +1137,11 @@ function createWindow() {
     mainWindow = null;
     // Nothing is feeding the viewer any more; an orphaned black window would
     // just be confusing.
+  });
+
+  mainWindow.webContents.on('did-create-window', (win, details) => {
+    if ((details.url || '').startsWith('https://accounts.google.com')) return;
+    adoptPresentationWindow(win);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
@@ -1774,7 +1829,7 @@ function buildMenu() {
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
-        { label: 'Pop Out Presentation', click: () => togglePresentationWindow() },
+        { label: 'Pop Out / Re-dock Presentation', click: () => togglePresentationWindow() },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
@@ -1868,6 +1923,7 @@ function registerShortcuts() {
   bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
   bind(s.toggleWindow, () => toggleMainWindow());
   bind(s.newMeeting, () => startInstantMeeting());
+  bind(s.presentation, () => togglePresentationWindow());
   bind(s.leave, () => clickByAriaLabel('leave call'));
 }
 

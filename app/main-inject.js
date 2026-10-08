@@ -307,13 +307,16 @@
     return true;
   }
 
-  function presentationTick(enabled) {
-    const tile = enabled ? presentationTile() : null;
+  // Detection runs unconditionally and `autoOpen` gates only the click: main
+  // relies on the return value to notice a share ending, which it must do even
+  // when auto pop-out is off and the window was opened by hand.
+  function presentationTick(autoOpen) {
+    const tile = presentationTile();
     if (!tile) {
       openedForTile = null;
       return false;
     }
-    if (openedForTile !== tile.id && openInOwnWindow(tile)) openedForTile = tile.id;
+    if (autoOpen && openedForTile !== tile.id && openInOwnWindow(tile)) openedForTile = tile.id;
     return true;
   }
 
