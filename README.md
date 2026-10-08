@@ -65,7 +65,7 @@ Same idea as macOS: SmartScreen's *"Windows protected your PC"* warning is trigg
 ### Ubuntu LTS (x64)
 
 ```sh
-curl -L -o /tmp/MeetLoaf.deb https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-amd64.deb
+wget -O /tmp/MeetLoaf.deb https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-amd64.deb
 sudo apt install /tmp/MeetLoaf.deb
 ```
 
@@ -103,10 +103,10 @@ Build locally with `cd app && npm install && npm run dist:win` → `app/dist/Mee
 
 ## Linux
 
-MeetLoaf runs on Ubuntu LTS (x64). It's tested on 26.04 (GNOME 50, Wayland), and built on 22.04 so the same packages also install on 22.04 and 24.04. Other recent distros should work from the AppImage. Install the `.deb` with the snippet at the top of this README, or use the AppImage:
+MeetLoaf runs on Ubuntu LTS (x64). It's tested on 26.04 (GNOME 50, Wayland), and built on 22.04 so the same packages should also install on 22.04 and 24.04 (untested). Other recent distros should work from the AppImage. Install the `.deb` with the snippet at the top of this README, or use the AppImage:
 
 ```sh
-curl -L -o ~/Applications/MeetLoaf.AppImage --create-dirs https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-x86_64.AppImage
+mkdir -p ~/Applications && wget -O ~/Applications/MeetLoaf.AppImage https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-x86_64.AppImage
 chmod +x ~/Applications/MeetLoaf.AppImage
 ~/Applications/MeetLoaf.AppImage
 ```
