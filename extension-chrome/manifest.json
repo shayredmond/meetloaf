@@ -16,7 +16,8 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "MeetLoaf Router (enabled)"
+    "default_title": "MeetLoaf Router",
+    "default_popup": "popup.html"
   },
   "web_accessible_resources": [
     {

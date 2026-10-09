@@ -349,7 +349,7 @@ Settings (⌘,) → **Routing** → next to "Chrome / Chromium extension":
 3. Click **Show folder** in MeetLoaf — Finder opens with the extension folder selected.
 4. Drag the folder onto the extensions page, or click **Load unpacked** and select it.
 
-The extension is now active. Toggle it via the puzzle-piece icon in your browser's toolbar.
+The extension is now active. Click its icon (under the puzzle-piece menu if it isn't pinned) for an on/off switch; when routing is off, the icon shows an "off" badge and Meet links open in the browser as usual.
 
 Unpacked extensions don't update themselves — after a MeetLoaf update, your browser keeps running the old extension until you click reload on it. The extension tells MeetLoaf its version with each link it hands over, and MeetLoaf prompts once (**Open Extensions** / **Show Folder**) when that's older than the copy it bundles. **Settings → Routing** shows whether the loaded extension is up to date. Extensions from before 0.2.4 don't report a version, so they can't be detected.
 
