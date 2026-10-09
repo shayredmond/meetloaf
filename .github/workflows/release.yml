@@ -5,6 +5,11 @@ on:
   # when someone cut a tag, which is the worst place to find them.
   pull_request:
   push:
+    # Merges land code no PR ever built: a conflict resolution is written at
+    # merge time and goes straight to main. Without this, the first build of
+    # such a merge would be the release build.
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:

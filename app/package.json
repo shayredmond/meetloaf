@@ -1,6 +1,6 @@
 {
   "name": "meetloaf",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Standalone Google Meet app for macOS, Windows and Linux",
   "main": "main.js",
   "desktopName": "meetloaf.desktop",
