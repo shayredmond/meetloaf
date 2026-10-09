@@ -310,6 +310,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Present a browser tab — same `window` section. Its shortcut row only
+  // shows while the feature is on.
+  const presentTabBtn = document.getElementById('presentBrowserTab');
+  if (presentTabBtn) {
+    const shortcutRow = document.querySelector('.row[data-key="presentTab"]');
+    const apply = (on) => {
+      presentTabBtn.classList.toggle('checked', on);
+      if (shortcutRow) shortcutRow.hidden = !on;
+    };
+    apply(cfg.window?.presentBrowserTab !== false);
+    presentTabBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const next = !presentTabBtn.classList.contains('checked');
+      apply(next);
+      state.raw.window = { ...(state.raw.window || {}), presentBrowserTab: next };
+      persistRaw();
+    });
+  }
+
   // Permissions tab. Rows come from the main process, which decides what
   // applies to this platform — the renderer only draws what it's handed, so
   // there's one place that knows Windows has no Local Network permission.

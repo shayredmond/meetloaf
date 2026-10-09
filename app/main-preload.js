@@ -10,6 +10,9 @@ window.addEventListener('message', (e) => {
   if (e.data.type === 'open-settings') {
     ipcRenderer.send('main:open-settings');
   }
+  if (e.data.type === 'present-tab') {
+    ipcRenderer.send('main:present-tab');
+  }
   // Call-phase transitions from the DOM watcher — main turns these into the
   // Home Assistant join/leave events (and gates always-on-top).
   if (e.data.type === 'meeting-phase') {

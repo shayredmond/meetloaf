@@ -136,13 +136,15 @@ function normalizeAccelerator(accel) {
   return [...MODIFIER_ORDER.filter((m) => mods.has(m)), key].join('+');
 }
 
-// Window preferences. `popOutPresentation` defaults on — only an explicit
-// false disables it — so the behavior appears for existing configs too.
+// Window preferences. `popOutPresentation` and `presentBrowserTab` default
+// on — only an explicit false disables them — so they appear for existing
+// configs too.
 const WINDOW_DEFAULTS = {
   width: 1200,
   height: 800,
   alwaysOnTop: false,
-  popOutPresentation: true
+  popOutPresentation: true,
+  presentBrowserTab: true
 };
 
 function normalizeWindow(raw) {
@@ -152,6 +154,7 @@ function normalizeWindow(raw) {
   if (Number.isFinite(src.height) && src.height > 0) out.height = Math.round(src.height);
   out.alwaysOnTop = src.alwaysOnTop === true;
   out.popOutPresentation = src.popOutPresentation !== false;
+  out.presentBrowserTab = src.presentBrowserTab !== false;
   // Where the presentation window was last left. Remembered because the whole
   // point of the feature is putting the shared screen on a second display, and
   // having to drag it there every meeting would defeat it.
@@ -848,6 +851,7 @@ ipcMain.on('main:meeting-phase', (e, raw) => {
 
 // Triggered by the injected "MeetLoaf Settings" link in Meet's own modal.
 ipcMain.on('main:open-settings', () => openSettingsWindow());
+ipcMain.on('main:present-tab', () => presentInBrowser());
 
 // ─── Firefox extension routing helpers ─────────────────────────────────────
 
@@ -978,7 +982,21 @@ function openInBrowser(browser, arg) {
 // no echo and no double audio — and present from there. `?companion=1` lands
 // straight on the Companion join screen; the Chrome extension lets links
 // carrying it through instead of handing them back to MeetLoaf.
+function presentTabEnabled() {
+  return config.window?.presentBrowserTab !== false;
+}
+
+// Tells the injected Share-button popover whether to appear. Run on every
+// page load (the flag lives on the page's window) and whenever settings save.
+function syncPresentTabToPage() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents
+    .executeJavaScript(`window.__meetloafPresentTab = ${presentTabEnabled()};`)
+    .catch(() => {});
+}
+
 async function presentInBrowser() {
+  if (!presentTabEnabled()) return;
   const code = currentMeetingCode();
   if (!inMeeting || !code) {
     notify('Not in a meeting', 'Join a meeting first, then present a browser tab.');
@@ -1205,6 +1223,7 @@ function createWindow() {
     // Only needed under the hidden macOS title bar; with a native frame the
     // strip would just eat clicks on Meet's header.
     if (IS_MAC) mainWindow.webContents.insertCSS(DRAG_REGION_CSS).catch(() => {});
+    syncPresentTabToPage();
     mainWindow.webContents.executeJavaScript(MEET_INJECTION).catch(() => {});
   });
 
@@ -1473,7 +1492,7 @@ function toggleMainWindow() {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Show / Hide MeetLoaf', click: () => toggleMainWindow() },
-    { label: 'Present a Browser Tab…', click: () => presentInBrowser() },
+    ...(presentTabEnabled() ? [{ label: 'Present a Browser Tab…', click: () => presentInBrowser() }] : []),
     { type: 'separator' },
     { label: 'Settings…', click: () => openSettingsWindow() },
     { label: 'Check for Updates…', click: () => checkForUpdates({ manual: true }) },
@@ -1861,7 +1880,12 @@ ipcMain.handle('config:get', () => {
 ipcMain.handle('config:save', (_e, next) => {
   if (!next || typeof next !== 'object') return { ok: false, error: 'Invalid config' };
   const result = saveConfig(next);
-  if (result.ok) registerShortcuts();
+  if (result.ok) {
+    registerShortcuts();
+    // The View menu's "Present a Browser Tab…" follows the setting.
+    buildMenu();
+    syncPresentTabToPage();
+  }
   return result;
 });
 
@@ -1922,7 +1946,7 @@ function buildMenu() {
         { role: 'zoomOut' },
         { type: 'separator' },
         { label: 'Pop Out Presentation', click: () => togglePresentationWindow() },
-        { label: 'Present a Browser Tab\u2026', click: () => presentInBrowser() },
+        { label: 'Present a Browser Tab\u2026', visible: presentTabEnabled(), click: () => presentInBrowser() },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
@@ -2020,7 +2044,7 @@ function registerShortcuts() {
   bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
   bind(s.toggleWindow, () => toggleMainWindow());
   bind(s.newMeeting, () => startInstantMeeting());
-  bind(s.presentTab, () => presentInBrowser());
+  if (presentTabEnabled()) bind(s.presentTab, () => presentInBrowser());
   bind(s.leave, () => clickByAriaLabel('leave call'));
 }
 

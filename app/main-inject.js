@@ -106,6 +106,153 @@
     log('injected entry into', tablist);
   }
 
+  // ─── "Present a browser tab" hover popover ───────────────────────────────
+  //
+  // Hovering Meet's Share screen button pops up a small tray above it with a
+  // "Present a browser tab" pill, the way Reactions pops its emoji row. It
+  // asks main to open this meeting in the browser's Companion mode (see
+  // presentInBrowser() in main.js).
+  //
+  // It lives in its own fixed layer on <body>, never inside Meet's toolbar:
+  // Meet renders the toolbar with Incremental DOM, which strips nodes it
+  // didn't create on every redraw. A button injected there got removed and
+  // re-added constantly, and each round made the whole toolbar flicker. The
+  // Share screen button is found by its label (or its icon, which survives
+  // the label changing while presenting), never by class names.
+  const PRESENT_TAB_LABEL = 'Present a browser tab';
+  const SHARE_ICON = 'computer_arrow_up';
+  // Meet's own "Share screen" hover label sits ~28px above the button; the
+  // tray goes above that rather than covering it.
+  const POPOVER_LIFT = 36;
+  const POPOVER_HIDE_DELAY = 200;
+
+  function findShareScreenButton() {
+    return document.querySelector('button[aria-label="Share screen" i]')
+      || Array.from(document.querySelectorAll('button i.google-symbols'))
+        .find((i) => i.textContent.trim() === SHARE_ICON)?.closest('button');
+  }
+
+  function isShareScreenButton(el) {
+    const button = el?.closest?.('button');
+    if (!button) return false;
+    if (/^share screen$/i.test(button.getAttribute('aria-label') || '')) return true;
+    return Array.from(button.querySelectorAll('i.google-symbols'))
+      .some((i) => i.textContent.trim() === SHARE_ICON);
+  }
+
+  let popover = null;
+  let popoverHideTimer = null;
+
+  function buildPopover() {
+    // Outer layer is transparent and stretches down to the Share button
+    // (padding-bottom, set when shown), so the pointer can travel up to the
+    // tray without crossing a gap that would close it.
+    const wrap = document.createElement('div');
+    wrap.setAttribute(MARKER, 'present-tab-popover');
+    Object.assign(wrap.style, {
+      position: 'fixed', zIndex: '2147483647', transform: 'translateX(-50%)',
+      display: 'none'
+    });
+
+    const tray = document.createElement('div');
+    Object.assign(tray.style, {
+      background: 'rgb(30, 31, 32)', borderRadius: '24px', padding: '8px',
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.35)'
+    });
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute(MARKER, 'present-tab');
+    const restBg = 'rgb(51, 53, 55)';
+    const hoverBg = 'rgb(68, 71, 74)';
+    Object.assign(button.style, {
+      display: 'flex', alignItems: 'center', gap: '10px',
+      height: '48px', padding: '0 20px 0 16px', border: '0', borderRadius: '24px',
+      background: restBg, color: 'rgb(227, 227, 227)', cursor: 'pointer',
+      font: '500 14px/20px "Google Sans", Roboto, sans-serif', letterSpacing: '0.1px',
+      whiteSpace: 'nowrap'
+    });
+    const icon = document.createElement('i');
+    // Meet's icon font, so the glyph matches the toolbar's.
+    icon.className = 'google-symbols notranslate';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = 'tab';
+    Object.assign(icon.style, { fontSize: '24px', fontStyle: 'normal', lineHeight: '24px' });
+    const label = document.createElement('span');
+    label.textContent = PRESENT_TAB_LABEL;
+    button.append(icon, label);
+
+    button.addEventListener('pointerenter', () => { button.style.background = hoverBg; });
+    button.addEventListener('pointerleave', () => { button.style.background = restBg; });
+    button.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hidePopover();
+      log('present a browser tab');
+      window.postMessage({ source: 'meetloaf-injected', type: 'present-tab' }, '*');
+    });
+
+    tray.appendChild(button);
+    wrap.appendChild(tray);
+    return wrap;
+  }
+
+  function showPopover(share) {
+    clearTimeout(popoverHideTimer);
+    if (!popover) popover = buildPopover();
+    if (!popover.isConnected) document.body.appendChild(popover);
+    const b = share.getBoundingClientRect();
+    popover.style.display = 'block';
+    popover.style.paddingBottom = `${POPOVER_LIFT}px`;
+    popover.style.left = `${Math.round(b.left + b.width / 2)}px`;
+    // Bottom edge (bridge included) sits on the Share button's top edge.
+    popover.style.top = 'auto';
+    popover.style.bottom = `${Math.round(window.innerHeight - b.top)}px`;
+  }
+
+  function hidePopover() {
+    clearTimeout(popoverHideTimer);
+    if (popover) popover.style.display = 'none';
+  }
+
+  function popoverVisible() {
+    return !!popover && popover.isConnected && popover.style.display !== 'none';
+  }
+
+  // Delegated from the document so it keeps working however often Meet
+  // replaces the Share button's element.
+  // Off unless main has said the setting is on (window.__meetloafPresentTab,
+  // set on every page load and on settings save).
+  document.addEventListener('pointerover', (e) => {
+    if (window.__meetloafPresentTab !== true) {
+      if (popoverVisible()) hidePopover();
+      return;
+    }
+    if (isShareScreenButton(e.target)) {
+      showPopover(e.target.closest('button'));
+    } else if (popover && popover.contains(e.target)) {
+      clearTimeout(popoverHideTimer);
+    } else if (popoverVisible()) {
+      clearTimeout(popoverHideTimer);
+      popoverHideTimer = setTimeout(hidePopover, POPOVER_HIDE_DELAY);
+    }
+  }, true);
+  // Going for Meet's own Share screen means they don't want ours.
+  document.addEventListener('pointerdown', (e) => {
+    if (isShareScreenButton(e.target)) hidePopover();
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hidePopover();
+  }, true);
+  document.documentElement.addEventListener('pointerleave', hidePopover);
+  window.addEventListener('blur', hidePopover);
+  window.addEventListener('resize', hidePopover);
+
+  // Called from the observer: the call ended, or the toolbar went away.
+  function maintainPopover() {
+    if (popoverVisible() && !findShareScreenButton()) hidePopover();
+  }
+
   // ─── Call-phase watcher (drives the Home Assistant join/leave events) ────
   //
   // Three phases matter, and the URL can't distinguish them — the
@@ -447,6 +594,7 @@
     raf = requestAnimationFrame(() => {
       raf = null;
       try { inject(); } catch (err) { log('inject error', err); }
+      try { maintainPopover(); } catch (err) { log('present-tab error', err); }
       try { reportCallPhase(); } catch (err) { log('call-phase error', err); }
       // Only ever *maintains* an already-open window here: opening is gated on
       // the user's setting, which only the main process knows, so main's poll

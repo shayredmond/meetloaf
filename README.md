@@ -151,7 +151,7 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
     "presentTab": "Cmd+Shift+P",
     "leave": { "accelerator": "Cmd+W", "global": false }
   },
-  "window": { "width": 1200, "height": 800, "popOutPresentation": true }
+  "window": { "width": 1200, "height": 800, "popOutPresentation": true, "presentBrowserTab": true }
 }
 ```
 
@@ -177,7 +177,9 @@ Detection reads what Meet says about a tile rather than guessing from what its v
 
 MeetLoaf's screen sharing offers whole screens and windows only. Chrome's tab sharing — the tab list, tab audio, *Share this tab instead* — only exists when Chrome itself handles the share, and MeetLoaf is a separate Chromium that can't see Chrome's tabs.
 
-**View → Present a Browser Tab…** (also in the tray menu, and bindable as a shortcut) opens the meeting you're in, in your default browser if it's Chromium-based (Chrome, Arc, Brave, Edge…) or else the first one installed, in Meet's **Companion mode**: `meet.google.com/xxx-yyyy-zzz?companion=1`. Companion mode joins with no mic, camera or speaker, so there's no echo. Click **Start Companion mode**, then **Present → A tab** as usual. You stay in the call in MeetLoaf; the companion shows up as a second you in the participant list while it's open.
+Hover Meet's **Share screen** button and a **Present a browser tab** option pops up above it (it's also in **View → Present a Browser Tab…**, the tray menu, and bindable as a shortcut). It opens the meeting you're in, in your default browser if it's Chromium-based (Chrome, Arc, Brave, Edge…) or else the first one installed, in Meet's **Companion mode**: `meet.google.com/xxx-yyyy-zzz?companion=1`. Companion mode joins with no mic, camera or speaker, so there's no echo. Click **Start Companion mode**, then **Present → A tab** as usual. You stay in the call in MeetLoaf; the companion shows up as a second you in the participant list while it's open.
+
+On by default. Turn it off in **Settings → Window → Present a browser tab**, or set `"window": { "presentBrowserTab": false }` — that removes the popover, the menu items and the shortcut.
 
 The Chrome extension lets `?companion=1` links through rather than handing them back to MeetLoaf, so this works with routing on. That needs extension 0.2.4 or later — reload the unpacked extension after updating.
 
