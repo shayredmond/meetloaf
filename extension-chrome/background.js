@@ -77,11 +77,10 @@ chrome.runtime.onInstalled.addListener(sync);
 chrome.runtime.onStartup.addListener(sync);
 sync();
 
-chrome.action.onClicked.addListener(async () => {
-  const enabled = !(await getEnabled());
-  await chrome.storage.local.set({ enabled });
-  await applyRules(enabled);
-  updateBadge(enabled);
+// The toolbar popup (popup.html) owns the on/off switch and only writes
+// storage; apply whatever it set.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && 'enabled' in changes) sync();
 });
 
 // "Join in the browser instead": let Meet load in that one tab for as long as

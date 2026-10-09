@@ -290,7 +290,7 @@ Settings (⌘,) → **Routing** → next to "Chrome / Chromium extension":
 3. Click **Show folder** in MeetLoaf — Finder opens with the extension folder selected.
 4. Drag the folder onto the extensions page, or click **Load unpacked** and select it.
 
-The extension is now active. Toggle it via the puzzle-piece icon in your browser's toolbar.
+The extension is now active. Click its icon (under the puzzle-piece menu if it isn't pinned) for an on/off switch; when routing is off, the icon shows an "off" badge and Meet links open in the browser as usual.
 
 The first Meet link you click shows the browser's *"Open MeetLoaf?"* prompt — tick **Always allow** and click **Open**. From then on links go straight to MeetLoaf, and the hand-off tab closes itself after a 10-second countdown (or goes back, if you clicked the link from another page) — **Close now** skips the wait. **Join in the browser instead** on the hand-off tab lets that one tab load Meet normally.
 
