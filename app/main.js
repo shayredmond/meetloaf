@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, screen } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -7,6 +7,10 @@ const pkg = require('./package.json');
 
 const IS_MAC = process.platform === 'darwin';
 const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
+// Electron runs natively on Wayland by default, where screen capture and
+// global shortcuts go through xdg-desktop-portal rather than the app.
+const IS_WAYLAND = IS_LINUX && process.env.XDG_SESSION_TYPE === 'wayland';
 
 const MEET_URL = 'https://meet.google.com/';
 const MEETING_CODE_RE = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(\/|$)/;
@@ -25,6 +29,11 @@ const BUNDLED_CONFIG = path.join(__dirname, 'config.json');
 // dir (which doesn't move). Browser session/cache always stays in userData.
 const DEFAULT_CONFIG_DIR = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'meetloaf');
 const DEFAULT_CONFIG_PATH = path.join(DEFAULT_CONFIG_DIR, 'config.json');
+// On Linux Electron's userData is ~/.config/<name> — the very folder above —
+// so cookies and caches would land in the dotfiles dir. Give the browser
+// state its own folder, named as on macOS/Windows. Must run before anything
+// reads userData.
+if (IS_LINUX) app.setPath('userData', path.join(app.getPath('appData'), 'MeetLoaf'));
 const POINTER_FILE = path.join(app.getPath('userData'), 'config-path.txt');
 // Legacy: pre-XDG-relocation config used to live alongside Electron's
 // userData. We migrate on first launch so existing settings aren't lost.
@@ -67,12 +76,6 @@ const MEET_INJECTION = fs.readFileSync(path.join(__dirname, 'main-inject.js'), '
 let mainWindow = null;
 let settingsWindow = null;
 let welcomeWindow = null;
-// The popped-out presentation viewer. Created by the Meet page itself via
-// window.open() (see the pop-out section of main-inject.js) rather than by us,
-// because only a window opened that way is same-origin with Meet and can be
-// handed a live MediaStream by reference. We adopt it here to give it window
-// chrome, position and lifetime.
-let presentationWindow = null;
 let tray = null;
 let inMeeting = false;
 // A meet:// deep link can arrive before the main window exists (cold start,
@@ -94,6 +97,7 @@ const DEFAULT_SHORTCUTS = {
   hand: { accelerator: '', global: true },
   toggleWindow: { accelerator: '', global: true },
   newMeeting: { accelerator: '', global: true },
+  presentation: { accelerator: '', global: true },
   presentTab: { accelerator: '', global: true },
   leave: { accelerator: 'CmdOrCtrl+W', global: false }
 };
@@ -155,18 +159,6 @@ function normalizeWindow(raw) {
   out.alwaysOnTop = src.alwaysOnTop === true;
   out.popOutPresentation = src.popOutPresentation !== false;
   out.presentBrowserTab = src.presentBrowserTab !== false;
-  // Where the presentation window was last left. Remembered because the whole
-  // point of the feature is putting the shared screen on a second display, and
-  // having to drag it there every meeting would defeat it.
-  const b = src.presentationBounds;
-  if (b && typeof b === 'object' && Number.isFinite(b.width) && Number.isFinite(b.height)) {
-    out.presentationBounds = {
-      x: Number.isFinite(b.x) ? Math.round(b.x) : undefined,
-      y: Number.isFinite(b.y) ? Math.round(b.y) : undefined,
-      width: Math.max(320, Math.round(b.width)),
-      height: Math.max(200, Math.round(b.height))
-    };
-  }
   return out;
 }
 
@@ -308,9 +300,6 @@ function applyWindowPrefs() {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.setAlwaysOnTop(aot, 'floating', 2);
     }
-    if (presentationWindow && !presentationWindow.isDestroyed()) {
-      presentationWindow.setAlwaysOnTop(aot, 'floating', 1);
-    }
   }
 }
 
@@ -323,92 +312,144 @@ function applyWindowPrefs() {
 // mirrored. Everything below is about adopting that window afterwards and
 // giving it a sensible life — chrome, remembered bounds, always-on-top to
 // match the main window, and a clean shutdown when the call ends.
-const PRESENTATION_FRAME = 'meetloaf-presentation';
 
 function popOutEnabled() {
   return config.window?.popOutPresentation !== false;
 }
 
-// A remembered position is only worth restoring if the display it was on is
-// still attached — unplugging the second monitor would otherwise strand the
-// window somewhere the user can't reach it.
-function boundsOnSomeDisplay(b) {
-  if (!b || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return false;
-  return screen.getAllDisplays().some((d) => {
-    const a = d.workArea;
-    return b.x < a.x + a.width && b.x + b.width > a.x &&
-           b.y < a.y + a.height && b.y + b.height > a.y;
+// Auto pop-out applies only when there's nothing popped out already and the
+// user hasn't just re-docked by hand.
+function autoOpenWanted() {
+  return popOutEnabled() && phase === 'in_call' &&
+    !presentationWindowOpen() && !autoOpenSuppressed;
+}
+
+
+
+
+
+
+// Meet's own presentation window. We need a handle on it for two things it
+// won't do itself: re-docking on request, and clearing the "No one is sharing
+// their screen" placeholder it leaves behind when a share ends.
+let presentationWin = null;
+// Whether a share was ever live while this window was open. Without it, a
+// window opened before anyone shares would be closed on the very next poll.
+let presentationWinSawShare = false;
+// Set when the user re-docks by hand. Popping the presentation out removes its
+// tile from the main window, so a re-dock puts the tile straight back and auto
+// pop-out would grab it again on the next poll, undoing the thing they asked
+// for. Cleared when the share ends, so the next one pops out normally.
+let autoOpenSuppressed = false;
+// Why the window is closing. BrowserWindow.close() is asynchronous, so the
+// 'closed' handler runs after whatever follows the call and can't be corrected
+// afterwards — it has to be told the reason in advance.
+let closingForShareEnd = false;
+// Meet's DOM churns while it moves a presentation back into the main window, so
+// the tile is missing for a poll or two straight after a re-dock — detection
+// needs a decoded frame and there isn't one yet. Treating that gap as "the
+// share ended" lifts the suppression and auto pop-out immediately undoes the
+// re-dock. Same churn EXIT_CONFIRM_MS exists for, so take the same approach and
+// require the share to stay gone. Several polls' worth, since one unlucky poll
+// landing in the gap is all it takes.
+const SHARE_GONE_MS = 6000;
+let shareGoneSince = 0;
+
+function presentationWindowOpen() {
+  return !!(presentationWin && !presentationWin.isDestroyed());
+}
+
+// Identifying it by title would mean matching "Presentation Window", which Meet
+// localises. During a call the only child windows are the auth popup and this
+// one, so the newest non-auth child is it — and if a transient popup does slip
+// through, it closes itself and hands the reference back.
+function adoptPresentationWindow(win) {
+  presentationWin = win;
+  presentationWinSawShare = false;
+  win.on('closed', () => {
+    if (presentationWin !== win) return;
+    presentationWin = null;
+    presentationWinSawShare = false;
+    // A close we didn't initiate is a decision to have it docked — including
+    // the window's own close button, which would otherwise be undone by the
+    // next poll. Closing it ourselves because the share ended is not.
+    autoOpenSuppressed = !closingForShareEnd;
+    closingForShareEnd = false;
   });
 }
 
-function presentationWindowOptions() {
-  const saved = config.window?.presentationBounds;
-  const opts = {
-    width: saved?.width || 1024,
-    height: saved?.height || 640,
-    minWidth: 320,
-    minHeight: 200,
-    title: 'Presentation',
-    backgroundColor: '#000000',
-    ...(IS_MAC ? {} : { autoHideMenuBar: true })
-    // webPreferences is deliberately not overridden: the window has to stay in
-    // the opener's process and origin or the stream hand-off breaks.
-  };
-  if (boundsOnSomeDisplay(saved)) {
-    opts.x = saved.x;
-    opts.y = saved.y;
-  }
-  return opts;
-}
-
-function rememberPresentationBounds() {
-  if (!presentationWindow || presentationWindow.isDestroyed()) return;
-  const b = presentationWindow.getBounds();
-  const prev = config.window?.presentationBounds;
-  if (prev && prev.x === b.x && prev.y === b.y &&
-      prev.width === b.width && prev.height === b.height) return;
-  saveConfig({ ...config, window: { ...config.window, presentationBounds: b } });
-}
-
-function adoptPresentationWindow(win) {
-  presentationWindow = win;
-  const aot = !!(config.window && config.window.alwaysOnTop) && inMeeting;
-  win.setAlwaysOnTop(aot, 'floating', 1);
-  win.on('close', rememberPresentationBounds);
-  win.on('closed', () => { presentationWindow = null; });
-  console.log('[meetloaf] presentation popped out');
-}
-
-// Closing from this side (the call ended, the renderer was replaced) instead
-// of from the page. The page runs its own state machine, so it has to be told
-// to drop the handle — otherwise it reads the vanished window as "the user
-// dismissed this" and won't reopen for the next presenter.
-function closePresentationWindow(reason) {
-  if (!presentationWindow || presentationWindow.isDestroyed()) return;
-  console.log(`[meetloaf] closing presentation window (${reason})`);
-  rememberPresentationBounds();
-  presentationWindow.destroy();
-  presentationWindow = null;
-  const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
-  if (wc && !wc.isCrashed()) {
-    wc.executeJavaScript('window.__meetloafPopout && window.__meetloafPopout.reset()')
-      .catch(() => {});
+// Whether Meet's window is actually showing a presentation. This has to be
+// asked of that window rather than inferred from the main one: popping out
+// removes the tile from the main window, so "no tile" means the pop-out worked
+// just as often as it means the share ended. Looks for live video rather than
+// the "No one is sharing their screen" text, which Meet localises.
+// Returns null when the window can't answer — mid-load or gone — so callers
+// can tell "not presenting" apart from "don't know".
+async function presentationWindowLive() {
+  if (!presentationWindowOpen()) return null;
+  try {
+    return await presentationWin.webContents.executeJavaScript(`
+      (() => {
+        for (const v of document.querySelectorAll('video')) {
+          if (!v.videoWidth || !v.videoHeight) continue;
+          const s = v.srcObject;
+          if (!s || typeof s.getVideoTracks !== 'function') continue;
+          if (s.getVideoTracks().some((t) => t.readyState === 'live')) return true;
+        }
+        return false;
+      })()
+    `);
+  } catch {
+    return null;
   }
 }
 
-// Menu command. Deliberately independent of auto-detection: this is the
-// escape hatch for when Meet's markup moved and detection didn't fire.
+// Meet leaves its window up showing the "No one is sharing their screen"
+// placeholder once a share ends. Close it — but only once we've seen a share in
+// it, so a window opened ahead of a presentation is left alone.
+function syncPresentationWindow(docked, popoutLive) {
+  // The share counts as live in either window; while it's popped out the main
+  // window has no tile at all, so `docked` alone would read as gone.
+  const shareLive = docked || popoutLive === true;
+  if (shareLive) shareGoneSince = 0;
+  else if (!shareGoneSince) shareGoneSince = Date.now();
+
+  if (!presentationWindowOpen()) {
+    // Nothing popped out: once the share is really over — not just mid-re-dock
+    // — let the next one pop out.
+    if (!shareLive && Date.now() - shareGoneSince >= SHARE_GONE_MS) autoOpenSuppressed = false;
+    return;
+  }
+  if (popoutLive === true) {
+    presentationWinSawShare = true;
+    return;
+  }
+  // Unknown, or the presentation is simply docked again — either way there's
+  // nothing to conclude about the share having ended.
+  if (popoutLive === null || docked) return;
+  if (!presentationWinSawShare) return;
+  console.log('[meetloaf] share ended, closing the empty presentation window');
+  closingForShareEnd = true;
+  presentationWin.close();
+}
+
+// Menu command and shortcut, and a genuine toggle: closing Meet's window is how
+// you re-dock, because Meet puts the presentation back in the main window when
+// its popup goes away. Deliberately independent of the auto pop-out setting —
+// the point is to override it in either direction.
 function togglePresentationWindow() {
+  if (presentationWindowOpen()) {
+    // The 'closed' handler suppresses auto pop-out for us.
+    closingForShareEnd = false;
+    presentationWin.close();
+    return;
+  }
+  autoOpenSuppressed = false;
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.executeJavaScript(`
-    (() => {
-      const api = window.__meetloafPopout;
-      if (!api) return null;
-      if (api.isOpen()) { api.close(); return true; }
-      return api.open();
-    })()
-  `).then((ok) => {
-    if (ok === false) console.log('[meetloaf] no remote video to pop out');
+  mainWindow.webContents.executeJavaScript(
+    'window.__meetloafPopout ? window.__meetloafPopout.open() : false'
+  ).then((ok) => {
+    if (!ok) console.log('[meetloaf] no presentation to open, or Meet\'s control was not present');
   }).catch(() => {});
 }
 
@@ -496,7 +537,6 @@ function commitPhase(next, reason) {
     inMeeting = connected;
     applyWindowPrefs();
   }
-  if (!connected) closePresentationWindow(`phase ${next}`);
 
   const present = phaseIsPresent(next);
   if (present !== haPresent) {
@@ -512,6 +552,7 @@ async function pollPhase() {
   // page, and this is also what catches "navigated away while hidden".
   if (!isInActiveMeeting()) {
     observePhase('away', 'poll');
+    syncPresentationWindow(false, await presentationWindowLive());
     return;
   }
   try {
@@ -523,10 +564,11 @@ async function pollPhase() {
         phase: typeof window.__meetloafCallPhase === 'function'
           ? window.__meetloafCallPhase() : null,
         presenting: typeof window.__meetloafPresentationTick === 'function'
-          ? window.__meetloafPresentationTick(${popOutEnabled() && phase === 'in_call'}) : false
+          ? window.__meetloafPresentationTick(${autoOpenWanted()}) : false
       }))()
     `);
     if (state && typeof state.phase === 'string') observePhase(state.phase, 'poll');
+    if (state) syncPresentationWindow(!!state.presenting, await presentationWindowLive());
   } catch {
     // Page mid-navigation or renderer gone — the next tick will catch up.
   }
@@ -873,6 +915,20 @@ function winPaths(rel) {
     .map((base) => path.join(base, rel));
 }
 
+// Linux browsers live on PATH-ish locations rather than one app folder, and
+// may be a snap or a flatpak. `extra` are absolute paths for tarball/PPA
+// installs; `flatpakId` adds the system and user exported launchers.
+function linuxPaths(bin, extra = [], flatpakId = null) {
+  const paths = ['/usr/bin', '/usr/local/bin', '/snap/bin'].map((dir) => path.join(dir, bin)).concat(extra);
+  if (flatpakId) {
+    paths.push(
+      path.join('/var/lib/flatpak/exports/bin', flatpakId),
+      path.join(os.homedir(), '.local/share/flatpak/exports/bin', flatpakId)
+    );
+  }
+  return paths;
+}
+
 const FIREFOX_CANDIDATES = IS_WIN ? [
   { name: 'Firefox', paths: winPaths('Mozilla Firefox\\firefox.exe') },
   { name: 'Firefox Developer Edition', paths: winPaths('Firefox Developer Edition\\firefox.exe') },
@@ -881,6 +937,16 @@ const FIREFOX_CANDIDATES = IS_WIN ? [
   { name: 'LibreWolf', paths: winPaths('LibreWolf\\librewolf.exe') },
   { name: 'Waterfox', paths: winPaths('Waterfox\\waterfox.exe') },
   { name: 'Floorp', paths: winPaths('Ablaze Floorp\\floorp.exe') }
+] : IS_LINUX ? [
+  // Ubuntu's /usr/bin/firefox is the snap shim; /snap/bin covers a removed
+  // shim, /usr/lib the Mozilla PPA/deb build, flatpak its exported launcher.
+  { name: 'Firefox', paths: linuxPaths('firefox', ['/usr/lib/firefox/firefox', '/opt/firefox/firefox'], 'org.mozilla.firefox') },
+  { name: 'Firefox Developer Edition', paths: linuxPaths('firefox-developer-edition') },
+  { name: 'Firefox ESR', paths: linuxPaths('firefox-esr') },
+  { name: 'Zen Browser', paths: linuxPaths('zen-browser', [], 'app.zen_browser.zen') },
+  { name: 'LibreWolf', paths: linuxPaths('librewolf', [], 'io.gitlab.librewolf-community') },
+  { name: 'Waterfox', paths: linuxPaths('waterfox', [], 'net.waterfox.waterfox') },
+  { name: 'Floorp', paths: linuxPaths('floorp', [], 'one.ablaze.floorp') }
 ] : [
   { name: 'Firefox', path: '/Applications/Firefox.app' },
   { name: 'Firefox Developer Edition', path: '/Applications/Firefox Developer Edition.app' },
@@ -906,6 +972,14 @@ const CHROMIUM_CANDIDATES = IS_WIN ? [
   // Last: Edge ships with Windows, so it's nearly always present and would
   // otherwise shadow the browser people actually use.
   { name: 'Microsoft Edge', paths: winPaths('Microsoft\\Edge\\Application\\msedge.exe') }
+] : IS_LINUX ? [
+  { name: 'Google Chrome', paths: linuxPaths('google-chrome', ['/opt/google/chrome/chrome'], 'com.google.Chrome') },
+  { name: 'Chromium', paths: linuxPaths('chromium', [], 'org.chromium.Chromium').concat(linuxPaths('chromium-browser')) },
+  { name: 'Brave Browser', paths: linuxPaths('brave-browser', [], 'com.brave.Browser') },
+  { name: 'Vivaldi', paths: linuxPaths('vivaldi', [], 'com.vivaldi.Vivaldi') },
+  { name: 'Opera', paths: linuxPaths('opera') },
+  { name: 'Thorium', paths: linuxPaths('thorium-browser') },
+  { name: 'Microsoft Edge', paths: linuxPaths('microsoft-edge', [], 'com.microsoft.Edge') }
 ] : [
   { name: 'Google Chrome', path: '/Applications/Google Chrome.app' },
   { name: 'Google Chrome Canary', path: '/Applications/Google Chrome Canary.app' },
@@ -1185,7 +1259,18 @@ ipcMain.handle('firefox:install-extension', async () => {
 
   // The browser sees the .xpi extension and shows its install confirmation
   // dialog.
-  return openInBrowser(ff, xpi);
+  if (!IS_LINUX) return openInBrowser(ff, xpi);
+
+  // Ubuntu's Firefox is a snap, confined to non-hidden files under $HOME: it
+  // can read neither /opt nor the app.asar the .xpi sits in. Hand it a copy
+  // in Downloads instead.
+  try {
+    const copy = path.join(app.getPath('downloads'), 'meetloaf-firefox-extension.xpi');
+    fs.copyFileSync(xpi, copy);
+    return openInBrowser(ff, copy);
+  } catch (err) {
+    return { ok: false, error: `Could not stage the extension: ${err.message}` };
+  }
 });
 
 function normalizeMeetUrl(raw) {
@@ -1288,12 +1373,6 @@ function createWindow() {
   // `did-navigate-in-page` (Meet's SPA route changes) are needed.
   mainWindow.webContents.on('did-navigate', checkMeetingState);
   mainWindow.webContents.on('did-navigate-in-page', checkMeetingState);
-  // A full page load replaces the renderer that owns the pop-out, leaving a
-  // window with a dead stream behind. Worse, the freshly injected script has
-  // no handle on it and would open a second one — so close it here. Reloading
-  // straight back into the same meeting isn't a phase change, so the phase
-  // machinery never sees this case.
-  mainWindow.webContents.on('did-navigate', () => closePresentationWindow('page load'));
   // A crashed/killed renderer means the call is over even though no navigation
   // happened — without this the "leave" event would never fire.
   mainWindow.webContents.on('render-process-gone', () => {
@@ -1357,15 +1436,16 @@ function createWindow() {
     mainWindow = null;
     // Nothing is feeding the viewer any more; an orphaned black window would
     // just be confusing.
-    closePresentationWindow('main window closed');
+  });
+
+  mainWindow.webContents.on('did-create-window', (win, details) => {
+    if ((details.url || '').startsWith('https://accounts.google.com')) return;
+    adoptPresentationWindow(win);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
     // Our own presentation viewer, opened by the injected script. Named so we
     // can tell it apart from Meet's own transient about:blank popups below.
-    if (frameName === PRESENTATION_FRAME) {
-      return { action: 'allow', overrideBrowserWindowOptions: presentationWindowOptions() };
-    }
     // Google auth popups stay in-app.
     if (url.startsWith('https://accounts.google.com')) {
       return { action: 'allow' };
@@ -1382,9 +1462,6 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  mainWindow.webContents.on('did-create-window', (win, { frameName }) => {
-    if (frameName === PRESENTATION_FRAME) adoptPresentationWindow(win);
-  });
 }
 
 function clickByAriaLabel(patternSource) {
@@ -1428,10 +1505,13 @@ function versionIsNewer(latest, current) {
 let lastUpdateCheckAt = 0;
 const UPDATE_CHECK_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-// ─── Auto-update (Windows only) ────────────────────────────────────────────
+// ─── Auto-update (Windows and Linux AppImage) ──────────────────────────────
 //
-// electron-updater downloads the new installer and runs it. Windows only, and
-// that isn't an oversight: on macOS electron-updater drives Squirrel.Mac, which
+// electron-updater downloads the new installer and runs it. On Linux that only
+// applies to the AppImage ($APPIMAGE is set by its runtime), which updates by
+// swapping its own file; the .deb is owned by apt/dpkg, so it keeps the
+// notify-and-open-the-page path rather than escalating to root behind the
+// user's back. Not macOS, and that isn't an oversight: on macOS electron-updater drives Squirrel.Mac, which
 // verifies the downloaded app's code signature before applying it. MeetLoaf is
 // ad-hoc signed (no Apple Developer ID), so that check fails and there is no
 // flag to skip it — the verification is precisely what stops an update being
@@ -1447,7 +1527,7 @@ let updateDownloaded = false;
 function initAutoUpdater() {
   // Unpackaged runs have no app-update.yml, and electron-updater throws rather
   // than degrading, so `npm start` would break.
-  if (!IS_WIN || !app.isPackaged) return;
+  if (!(IS_WIN || (IS_LINUX && process.env.APPIMAGE)) || !app.isPackaged) return;
   try {
     ({ autoUpdater } = require('electron-updater'));
   } catch (err) {
@@ -1629,7 +1709,12 @@ function createTray() {
   tray.setToolTip('MeetLoaf');
   // Left-click toggles the window; right-click (and ctrl-click) opens the menu.
   tray.on('click', () => toggleMainWindow());
-  tray.on('right-click', () => tray.popUpContextMenu(buildTrayMenu()));
+  // Linux tray icons are StatusNotifierItems: the desktop draws the menu, so
+  // popUpContextMenu is a no-op there and the menu has to be attached up
+  // front. GNOME (AppIndicator) opens it on any click; that's fine, as the
+  // first item is Show / Hide.
+  if (IS_LINUX) tray.setContextMenu(buildTrayMenu());
+  else tray.on('right-click', () => tray.popUpContextMenu(buildTrayMenu()));
 }
 
 function openWelcomeWindow() {
@@ -2057,7 +2142,7 @@ function buildMenu() {
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
-        { label: 'Pop Out Presentation', click: () => togglePresentationWindow() },
+        { label: 'Pop Out / Re-dock Presentation', click: () => togglePresentationWindow() },
         { label: 'Present a Browser Tab\u2026', visible: presentTabEnabled(), click: () => presentInBrowser() },
         { type: 'separator' },
         { role: 'togglefullscreen' }
@@ -2116,10 +2201,6 @@ function attachLocalShortcuts(webContents) {
   webContents.on('before-input-event', (event, input) => {
     if (recordingShortcut) return;
     if (input.type !== 'keyDown') return;
-    // The popped-out presentation is a plain viewer: Cmd+W there has to close
-    // that window, not leave the call.
-    if (presentationWindow && !presentationWindow.isDestroyed() &&
-        presentationWindow.webContents === webContents) return;
     const accel = accelFromInput(input);
     if (!accel) return;
     const action = localShortcutMap.get(accel);
@@ -2151,20 +2232,42 @@ function registerShortcuts() {
     }
   };
 
-  bind(s.mute, () => clickByAriaLabel('turn (on|off) microphone'));
-  bind(s.camera, () => clickByAriaLabel('turn (on|off) camera'));
-  bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
-  bind(s.toggleWindow, () => toggleMainWindow());
-  bind(s.newMeeting, () => startInstantMeeting());
-  if (presentTabEnabled()) bind(s.presentTab, () => presentInBrowser());
-  bind(s.leave, () => clickByAriaLabel('leave call'));
+  for (const [name, fn] of Object.entries(SHORTCUT_ACTIONS)) {
+    // Switched off in Settings: don't hold on to its key either.
+    if (name === 'presentTab' && !presentTabEnabled()) continue;
+    bind(s[name], fn);
+  }
 }
+
+// Keyed by config.shortcuts name. Also reachable as `meetloaf --shortcut=<name>`
+// (see second-instance), which is how hotkeys work where globalShortcut can't:
+// on GNOME 50 Wayland the GlobalShortcuts portal rejects Electron's bind
+// (electron/electron#51875), so the desktop's own custom shortcuts run the
+// command instead.
+const SHORTCUT_ACTIONS = {
+  mute: () => clickByAriaLabel('turn (on|off) microphone'),
+  camera: () => clickByAriaLabel('turn (on|off) camera'),
+  hand: () => clickByAriaLabel('(raise|lower) hand'),
+  toggleWindow: () => toggleMainWindow(),
+  newMeeting: () => startInstantMeeting(),
+  presentation: () => togglePresentationWindow(),
+  presentTab: () => presentInBrowser(),
+  leave: () => clickByAriaLabel('leave call')
+};
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
+    // A hotkey fired from outside: act without raising the window, or muting
+    // from another app would yank focus into the meeting.
+    const shortcutArg = argv.find((a) => a.startsWith('--shortcut='));
+    if (shortcutArg) {
+      const action = SHORTCUT_ACTIONS[shortcutArg.slice('--shortcut='.length)];
+      if (action) action();
+      return;
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
@@ -2223,8 +2326,8 @@ if (!gotLock) {
     // source selection to ScreenCaptureKit's native picker. The function
     // arg is the fallback for older macOS where we provide our own choice.
     //
-    // Windows and Linux have no system picker, so there the handler is always
-    // what runs — and blindly taking sources[0] would share the primary
+    // Windows and Linux on X11 have no system picker, so there the handler is
+    // always what runs — and blindly taking sources[0] would share the primary
     // display without asking. Show our own picker instead.
     session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
       try {
@@ -2234,7 +2337,10 @@ if (!gotLock) {
           fetchWindowIcons: true
         });
         if (!sources.length) return callback({});
-        if (IS_MAC) return callback({ video: sources[0] });
+        // On Wayland, getSources() itself raised the xdg-desktop-portal
+        // picker and returns only what the user chose there — a second
+        // picker of our own would just ask the same question again.
+        if (IS_MAC || IS_WAYLAND) return callback({ video: sources[0] });
         const choice = await pickDisplaySource(sources);
         if (!choice) return callback({});
         const video = sources.find((s) => s.id === choice.id);

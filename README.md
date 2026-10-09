@@ -1,6 +1,6 @@
 # MeetLoaf
 
-A standalone macOS app for Google Meet — separate window, true OS-global hotkeys, and automatic routing of `meet.google.com` links from your browser and other apps (Slack, Mail, Calendar, etc.) into the app.
+A standalone macOS, Windows and Linux app for Google Meet — separate window, true OS-global hotkeys, and automatic routing of `meet.google.com` links from your browser and other apps (Slack, Mail, Calendar, etc.) into the app.
 
 Three pieces:
 
@@ -62,10 +62,21 @@ Same idea as macOS: SmartScreen's *"Windows protected your PC"* warning is trigg
 > Unblock-File .\MeetLoaf-Setup.exe
 > ```
 
+### Ubuntu LTS (x64)
+
+```sh
+wget -O /tmp/MeetLoaf.deb https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-amd64.deb
+sudo apt install /tmp/MeetLoaf.deb
+```
+
+The `.deb` installs to `/opt/MeetLoaf`, puts `meetloaf` on your `PATH`, adds an app-grid entry, registers the `meet://` handler, and on 24.04 installs the AppArmor profile Electron needs there. Remove it with `sudo apt remove meetloaf`.
+
+Prefer not to install system-wide? `MeetLoaf-linux-x86_64.AppImage` is on the release page too — see **§ Linux** below.
+
 MeetLoaf checks for updates on launch and from the **MeetLoaf → Check for Updates…** menu. What happens next depends on your platform:
 
-- **Windows** downloads and installs. You're asked before the download starts and again before it restarts; decline the restart and it installs the next time you quit.
-- **macOS** offers to open the release page, and you re-download by hand.
+- **Windows** and the **Linux AppImage** download and install. You're asked before the download starts and again before it restarts; decline the restart and it installs the next time you quit.
+- **macOS** and the **Linux `.deb`** offer to open the release page, and you re-download by hand. (The `.deb` belongs to apt; MeetLoaf won't ask for root to replace it behind apt's back.)
 
 That split isn't an oversight. On macOS the updater drives Squirrel.Mac, which verifies the downloaded app's code signature before applying it — and MeetLoaf is ad-hoc signed, with no Apple Developer ID. That check can't be skipped, and shouldn't be: it's what stops an update being swapped in transit. Buying a Developer ID (§ *About signing*) is what unlocks macOS auto-update; the code is already there behind a platform check.
 
@@ -87,6 +98,40 @@ Differences from macOS:
 - **Link routing:** there's no Velja on Windows. Install the Firefox or Chrome/Edge extension in your default browser (Settings → Routing) — links clicked in Slack, Outlook etc. open in that browser, and the extension hands them to MeetLoaf.
 
 Build locally with `cd app && npm install && npm run dist:win` → `app/dist/MeetLoaf-Setup-<arch>.exe`. For `npm start` on Windows, run `npm run icon:win` once first so the tray icon exists.
+
+---
+
+## Linux
+
+MeetLoaf runs on Ubuntu LTS (x64). It's tested on 26.04 (GNOME 50, Wayland), and built on 22.04 so the same packages should also install on 22.04 and 24.04 (untested). Other recent distros should work from the AppImage. Install the `.deb` with the snippet at the top of this README, or use the AppImage:
+
+```sh
+mkdir -p ~/Applications && wget -O ~/Applications/MeetLoaf.AppImage https://github.com/shayredmond/meetloaf/releases/latest/download/MeetLoaf-linux-x86_64.AppImage
+chmod +x ~/Applications/MeetLoaf.AppImage
+~/Applications/MeetLoaf.AppImage
+```
+
+AppImages need FUSE 2: `sudo apt install libfuse2t64` on 24.04 (`libfuse2` on 22.04). On 24.04, AppArmor also blocks the unprivileged user namespaces Chromium's sandbox uses. The `.deb` ships a profile that allows them, but an AppImage can't install one, so it fails to start with a sandbox error. Either use the `.deb`, or run the AppImage with `--no-sandbox`.
+
+Differences from macOS:
+
+- **Shortcuts** use Ctrl where macOS uses ⌘, as on Windows.
+- **Global hotkeys on Wayland don't register from inside the app.** On GNOME 50, every `globalShortcut.register()` fails ([electron#51875](https://github.com/electron/electron/issues/51875); still failing on Electron 44.7). MeetLoaf logs `Shortcut unavailable` for each one. Bind them in GNOME instead: every action can be triggered by running `meetloaf --shortcut=<name>` (`mute`, `camera`, `hand`, `toggleWindow`, `newMeeting`, `presentation`, `presentTab`, `leave`). The running app performs it without raising its window. Add one under *Settings → Keyboard → View and Customise Shortcuts → Custom Shortcuts*, or from a terminal:
+  ```sh
+  p=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/meetloaf-mute/
+  s=org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$p
+  gsettings set $s name 'MeetLoaf: mute'
+  gsettings set $s command 'meetloaf --shortcut=mute'
+  gsettings set $s binding '<Control><Alt>m'
+  # then append "$p" to: gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
+  ```
+  Pick combos that are free system-wide: a GNOME binding fires in every app, so `Ctrl+W`-style keys would break other apps. On X11, MeetLoaf's own global shortcuts work as on Windows.
+- **Screen sharing on Wayland** uses the desktop's own picker (the xdg-desktop-portal dialog), so there's no MeetLoaf picker. On X11 MeetLoaf shows its own picker, as on Windows. Sharing system audio isn't supported on Linux.
+- **Tray icon** needs a desktop that shows StatusNotifier icons. Ubuntu's default session does, via the built-in AppIndicator extension. Clicking it opens the menu, and **Show / Hide MeetLoaf** is the first item. Closing the window hides it to the tray; quit from the tray menu. Without a tray, launching MeetLoaf again brings the window back.
+- **Link routing:** there's no Velja on Linux either. Install the Firefox or Chrome extension (Settings → Routing). Ubuntu's Firefox is a snap and can't read files inside the app, so MeetLoaf copies the extension to `~/Downloads` before handing it over.
+- **Permissions:** Linux has no per-app camera or microphone permission outside snaps and flatpaks, so the Permissions panel shows them as unknown.
+
+Build locally on Linux with `cd app && npm install && npm run dist:linux` → `app/dist/MeetLoaf-linux-amd64.deb` and `MeetLoaf-linux-x86_64.AppImage`. For `npm start`, run `npm run icon:win` once first. Despite the name, it's the cross-platform resvg script, and it generates the tray icon Linux uses.
 
 ---
 
@@ -125,12 +170,12 @@ Global hotkeys, camera/mic, and `meet://` handoff all work in dev. The only thin
 
 **Settings → Permissions** shows what the OS has granted MeetLoaf, with a link into the relevant system pane for each. What it can tell you differs by platform, and the panel is built around those limits rather than pretending otherwise:
 
-| | macOS | Windows |
-|---|---|---|
-| Camera / Microphone status | read | read (global Win10+ setting) |
-| Screen Recording status | read | row hidden — no such permission |
-| Prompting from the app | only while *not yet requested* | not possible |
-| Local Network | **probed, not read** | row hidden — no such permission |
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Camera / Microphone status | read | read (global Win10+ setting) | unknown — no such permission |
+| Screen Recording status | read | row hidden — no such permission | row hidden — the portal asks per share |
+| Prompting from the app | only while *not yet requested* | not possible | not possible |
+| Local Network | **probed, not read** | row hidden — no such permission | row hidden — no such permission |
 
 Two things worth understanding. **A denied permission can't be re-requested by the app** — on macOS the OS refuses to ask twice, and Windows has no prompt API at all, so the honest action is the Settings link. And **Local Network has no API whatsoever**: Electron can neither read nor request it, so that row offers a **Test** instead, which attempts to reach your Home Assistant base URL and reports what happened. That's empirical rather than authoritative — a failure could be Home Assistant being down — but it's the only signal that exists, and it's the permission most likely to be silently missing.
 
@@ -165,13 +210,16 @@ Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/l
 
 ### Presentation pop-out
 
-When someone else starts presenting, MeetLoaf opens their shared screen in its own resizable window — drag it to a second display and the main window goes back to being the faces. Closing the window by hand dismisses it for that presentation; it comes back for the next one. The window remembers where you left it, and reopens there as long as that display is still attached.
+When someone else starts presenting, MeetLoaf asks Meet to open the shared screen in its own window — the same thing as clicking **Open in new window** on the presentation tile. Meet moves the share out, so the main window goes back to showing faces rather than showing the presentation twice.
 
-On by default. Turn it off in **Settings → Window → Pop out presentations**, or set `"window": { "popOutPresentation": false }`. **View → Pop Out Presentation** opens or closes it manually at any time.
+On by default. Turn it off in **Settings → Window → Pop out presentations**, or set `"window": { "popOutPresentation": false }`. **View → Pop Out Presentation** triggers it by hand at any time.
 
-This is not Picture-in-Picture and doesn't go near the APIs in the note above. The window is opened by the Meet page itself, so it's same-origin and shares Meet's renderer — which means the `<video>` inside it can be handed Meet's own `MediaStream` by reference. Nothing is re-captured, re-encoded or mirrored, and it costs no extra bandwidth.
+Earlier versions opened their own window and handed it Meet's `MediaStream` by reference. That worked, but it *duplicated* the presentation instead of moving it, and the window had its own failure modes. Meet's own control does the job properly and is a few hundred lines less of ours.
 
-Detection reads what Meet says about a tile rather than guessing from what its video looks like. (A 0.1.6 version scored videos on shape and size; it popped out cameras on join and was pulled in 0.1.7.) In Meet a presentation is its own tile, labelled *Name (Presentation)*, and only that tile carries the label. Your own screen share is excluded because its track is a local capture, not a remote one. Like the call-phase watcher, this relies on Meet's English labels.
+Worth knowing it is **not** the *Picture-in-picture* menu item, which uses the Document PiP API that Electron has never implemented ([electron#39633](https://github.com/electron/electron/issues/39633)) and which silently renders nothing. **Open in new window** is an ordinary popup and works.
+
+Detection only covers *other people's* presentations — your own share is excluded, since a window showing the screen you are sharing is an infinite hall of mirrors.
+
 
 ### Present a browser tab
 
@@ -231,12 +279,12 @@ Drop that file into Slack / Drive / wherever and colleagues can use the install 
    git tag v0.2.0
    git push origin v0.2.0
    ```
-3. CI (`.github/workflows/release.yml`) builds both platforms in parallel — the arm64 DMG on `macos-14`, the x64 + arm64 installers on `windows-latest` — then a separate `release` job collects both into a GitHub Release named `v0.2.0`.
+3. CI (`.github/workflows/release.yml`) builds every platform in parallel — the arm64 DMG on `macos-14`, the x64 + arm64 installers on `windows-latest`, the x64 `.deb` + AppImage on `ubuntu-22.04` — then a separate `release` job collects them into a GitHub Release named `v0.2.0`.
 4. **The release is created as a draft.** Nothing is public yet. Open it under [Releases](https://github.com/shayredmond/meetloaf/releases), download the DMG and the installers, check they run, then press **Publish release**.
 
 Step 4 is the point of no return, and the only one that reaches your colleagues — the update checker reads `/releases/latest`, which excludes drafts. If something's wrong, delete the draft and the release never existed. Merging a PR does none of this: only a `v*` tag starts a release at all.
 
-The same workflow runs on every pull request, building both platforms and uploading them as workflow artifacts without publishing anything. That's deliberate: a Windows build problem should surface on the PR, not halfway through cutting a release. Only a `v*` tag reaches the `release` job, and only that job gets a write-scoped token.
+The same workflow runs on every pull request, building every platform and uploading them as workflow artifacts without publishing anything. That's deliberate: a Windows build problem should surface on the PR, not halfway through cutting a release. Only a `v*` tag reaches the `release` job, and only that job gets a write-scoped token.
 
 The release job refuses to run if the tag and `app/package.json` disagree — tagging `v0.2.0` against a `0.1.9` package.json would otherwise prompt everyone to upgrade to a build reporting the version they already have, and keep prompting forever.
 
@@ -470,3 +518,11 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 - **Presentations don't pop out:** while someone is presenting, open DevTools (View → Toggle Developer Tools) and run `__meetloafPresentationDebug()`. It lists every tile with the labels the detector saw. If no tile shows `presentation: true`, Meet's wording has changed; the patterns are at the top of the pop-out section in `app/main-inject.js`. **View → Pop Out Presentation** opens the largest remote video by hand in the meantime.
 - **Something stays switched on after I hang up:** MeetLoaf should read Meet's post-hangup screen as `post_call` and fire leave. Check DevTools for `[meetloaf] phase: post_call`; if it says `unknown`, the *Rejoin* / *Return to home screen* labels changed.
 - **Update checker never prompts:** confirm `repository.url` in `app/package.json` points to a real GitHub repo (not `OWNER/REPO`).
+
+---
+
+## License
+
+MeetLoaf is released under the [MIT License](LICENSE). Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+MeetLoaf is an independent project and is not affiliated with, endorsed by, or sponsored by Google. Google Meet is a trademark of Google LLC.
