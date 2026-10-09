@@ -12,8 +12,13 @@ const AUTO_CLOSE_SECONDS = 10;
 const code = decodeURIComponent(location.hash.slice(1)).toLowerCase();
 const $ = (id) => document.getElementById(id);
 
+// mlext carries this extension's version, so MeetLoaf can tell when the
+// loaded copy is older than the one it bundles and prompt a reload (unpacked
+// extensions don't update themselves). MeetLoaf strips it before loading Meet.
+const VERSION = chrome.runtime.getManifest().version;
+
 function launch() {
-  location.href = `meet://meet.google.com/${code}`;
+  location.href = `meet://meet.google.com/${code}?mlext=${encodeURIComponent(VERSION)}`;
 }
 
 // Reached via the backstop in background.js: the Meet page loaded first and

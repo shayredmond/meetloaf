@@ -126,6 +126,18 @@
               </div>
             </div>
 
+            <div class="row shortcut-row" data-key="presentTab">
+              <label>Present a browser tab</label>
+              <div class="global-toggle">
+                <span class="global-label">Global</span>
+                <button type="button" class="switch" data-global aria-label="Make this shortcut global"><span class="slider"></span></button>
+              </div>
+              <div class="recorder">
+                <button class="capture" type="button" data-capture></button>
+                <button class="clear" type="button" data-clear title="Clear binding" aria-label="Clear binding">×</button>
+              </div>
+            </div>
+
             <div class="row shortcut-row" data-key="leave">
               <label>Leave meeting</label>
               <div class="global-toggle">
@@ -158,6 +170,14 @@
                 <span class="row-help">When someone else shares their screen, MeetLoaf asks Meet to open their presentation in its own window, and closes it again when the share ends. The shortcut pops out and re-docks regardless of this setting.</span>
               </label>
               <button type="button" class="switch" id="popOutPresentation" aria-label="Pop out presentations into their own window"><span class="slider"></span></button>
+            </div>
+
+            <div class="row toggle-row">
+              <label>
+                Present a browser tab
+                <span class="row-help">Hovering Share screen offers to present a browser tab instead. It opens this meeting in your browser in Meet's Companion mode (no mic, camera or sound), where you can share a single tab with its audio. Also in the View menu, and as a shortcut.</span>
+              </label>
+              <button type="button" class="switch" id="presentBrowserTab" aria-label="Offer to present a browser tab"><span class="slider"></span></button>
             </div>
           </div>
         </section>

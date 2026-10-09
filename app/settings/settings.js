@@ -310,6 +310,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Present a browser tab — same `window` section. Its shortcut row only
+  // shows while the feature is on.
+  const presentTabBtn = document.getElementById('presentBrowserTab');
+  if (presentTabBtn) {
+    const shortcutRow = document.querySelector('.row[data-key="presentTab"]');
+    const apply = (on) => {
+      presentTabBtn.classList.toggle('checked', on);
+      if (shortcutRow) shortcutRow.hidden = !on;
+    };
+    apply(cfg.window?.presentBrowserTab !== false);
+    presentTabBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const next = !presentTabBtn.classList.contains('checked');
+      apply(next);
+      state.raw.window = { ...(state.raw.window || {}), presentBrowserTab: next };
+      persistRaw();
+    });
+  }
+
   // Permissions tab. Rows come from the main process, which decides what
   // applies to this platform — the renderer only draws what it's handed, so
   // there's one place that knows Windows has no Local Network permission.
@@ -463,7 +482,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         chromeInstructions.hidden = true;
         return;
       }
-      chromeStatus.textContent = `Found ${info.chromium.name}. Load the extension via developer mode:`;
+      const ext = info.extension || {};
+      if (ext.outdated) {
+        chromeStatus.textContent = `${info.chromium.name} is running extension ${ext.seen}, but MeetLoaf comes with ${ext.bundled}. Open its extensions page and click reload on MeetLoaf Router:`;
+      } else if (ext.seen) {
+        chromeStatus.textContent = `Extension ${ext.seen} is loaded in ${info.chromium.name} and up to date. To load it in another browser, use developer mode:`;
+      } else {
+        chromeStatus.textContent = `Found ${info.chromium.name}. Load the extension via developer mode:`;
+      }
       showChromeFolderBtn.hidden = false;
       openChromeExtensionsBtn.hidden = false;
       chromeInstructions.hidden = false;

@@ -98,6 +98,7 @@ const DEFAULT_SHORTCUTS = {
   toggleWindow: { accelerator: '', global: true },
   newMeeting: { accelerator: '', global: true },
   presentation: { accelerator: '', global: true },
+  presentTab: { accelerator: '', global: true },
   leave: { accelerator: 'CmdOrCtrl+W', global: false }
 };
 
@@ -139,13 +140,15 @@ function normalizeAccelerator(accel) {
   return [...MODIFIER_ORDER.filter((m) => mods.has(m)), key].join('+');
 }
 
-// Window preferences. `popOutPresentation` defaults on — only an explicit
-// false disables it — so the behavior appears for existing configs too.
+// Window preferences. `popOutPresentation` and `presentBrowserTab` default
+// on — only an explicit false disables them — so they appear for existing
+// configs too.
 const WINDOW_DEFAULTS = {
   width: 1200,
   height: 800,
   alwaysOnTop: false,
-  popOutPresentation: true
+  popOutPresentation: true,
+  presentBrowserTab: true
 };
 
 function normalizeWindow(raw) {
@@ -155,6 +158,7 @@ function normalizeWindow(raw) {
   if (Number.isFinite(src.height) && src.height > 0) out.height = Math.round(src.height);
   out.alwaysOnTop = src.alwaysOnTop === true;
   out.popOutPresentation = src.popOutPresentation !== false;
+  out.presentBrowserTab = src.presentBrowserTab !== false;
   return out;
 }
 
@@ -889,6 +893,7 @@ ipcMain.on('main:meeting-phase', (e, raw) => {
 
 // Triggered by the injected "MeetLoaf Settings" link in Meet's own modal.
 ipcMain.on('main:open-settings', () => openSettingsWindow());
+ipcMain.on('main:present-tab', () => presentInBrowser());
 
 // ─── Firefox extension routing helpers ─────────────────────────────────────
 
@@ -954,9 +959,8 @@ const FIREFOX_CANDIDATES = IS_WIN ? [
   { name: 'Floorp', path: '/Applications/Floorp.app' }
 ];
 
-// Chromium-family detection is in place for future use — we don't ship
-// a Chrome extension yet, so the Routing tab won't act on these. Listed
-// here so adding the action later is a one-liner.
+// Chromium-family browsers, in preference order. Used by the Routing tab
+// (installing the extension) and by "Present a Browser Tab".
 const CHROMIUM_CANDIDATES = IS_WIN ? [
   { name: 'Google Chrome', paths: winPaths('Google\\Chrome\\Application\\chrome.exe') },
   { name: 'Google Chrome Canary', paths: winPaths('Google\\Chrome SxS\\Application\\chrome.exe') },
@@ -1000,6 +1004,24 @@ function findInList(candidates) {
 function findFirefox() { return findInList(FIREFOX_CANDIDATES); }
 function findChromium() { return findInList(CHROMIUM_CANDIDATES); }
 
+// The default browser if it's Chromium-based, else the first one installed.
+// Without this someone who lives in Arc but also has Chrome installed gets
+// sent to Chrome. Matched by path or name, and the default's own path is
+// used, so a copy outside /Applications still counts. Electron can't report
+// the default browser on Linux; that just falls back to the list.
+async function preferredChromium() {
+  try {
+    const info = await app.getApplicationInfoForProtocol('https://');
+    const norm = (p) => (IS_WIN ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const hit = CHROMIUM_CANDIDATES.find((c) =>
+      c.name === info.name.replace(/\.app$/, '') || (c.paths || [c.path]).some((p) => norm(p) === norm(info.path)));
+    if (hit) return { name: hit.name, path: info.path };
+  } catch {
+    // No default registered, or unsupported platform.
+  }
+  return findChromium();
+}
+
 // Open `arg` (a URL or file) in a specific browser.
 // macOS: `open -a <full path>` is unambiguous for variant browsers (Zen,
 // LibreWolf, etc.) whose canonical app name might not match what `open`
@@ -1027,9 +1049,48 @@ function openInBrowser(browser, arg) {
   });
 }
 
-ipcMain.handle('firefox:detect', () => {
+// Present a browser tab: Chrome's tab sharing (tab list, tab audio, "share
+// this tab instead") only exists when Chrome itself serves getDisplayMedia(),
+// and MeetLoaf can only offer screens and windows. So join the same meeting
+// from the browser in Meet's Companion mode — no mic, camera or speaker, so
+// no echo and no double audio — and present from there. `?companion=1` lands
+// straight on the Companion join screen; the Chrome extension lets links
+// carrying it through instead of handing them back to MeetLoaf.
+function presentTabEnabled() {
+  return config.window?.presentBrowserTab !== false;
+}
+
+// Tells the injected Share-button popover whether to appear. Run on every
+// page load (the flag lives on the page's window) and whenever settings save.
+function syncPresentTabToPage() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents
+    .executeJavaScript(`window.__meetloafPresentTab = ${presentTabEnabled()};`)
+    .catch(() => {});
+}
+
+async function presentInBrowser() {
+  if (!presentTabEnabled()) return;
+  const code = currentMeetingCode();
+  if (!inMeeting || !code) {
+    notify('Not in a meeting', 'Join a meeting first, then present a browser tab.');
+    return;
+  }
+  const browser = await preferredChromium();
+  if (!browser) {
+    notify('No Chrome found', 'Presenting a browser tab needs Chrome or another Chromium browser.');
+    return;
+  }
+  const res = await openInBrowser(browser, `https://meet.google.com/${code}?companion=1`);
+  if (!res.ok) {
+    console.warn(`[meetloaf] present in browser failed: ${res.error}`);
+    notify(`Couldn't open ${browser.name}`, res.error);
+  }
+}
+
+ipcMain.handle('firefox:detect', async () => {
   const ff = findFirefox();
-  const chromium = findChromium();
+  const chromium = await preferredChromium();
   const xpi = path.join(__dirname, 'firefox-extension.xpi');
   return {
     firefox: ff,                    // { name, path } or null
@@ -1048,32 +1109,144 @@ function chromeExtensionDir() {
     : path.join(__dirname, '..', 'extension-chrome');
 }
 
-ipcMain.handle('chrome:detect', () => {
-  const browser = findChromium();
-  const dir = chromeExtensionDir();
-  return {
-    chromium: browser,                  // { name, path } or null
-    extensionBundled: fs.existsSync(path.join(dir, 'manifest.json')),
-    extensionPath: dir
-  };
-});
+function bundledChromeExtensionVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(chromeExtensionDir(), 'manifest.json'), 'utf8')).version || null;
+  } catch {
+    return null;
+  }
+}
 
-ipcMain.handle('chrome:show-folder', () => {
+// ─── Chrome extension version check ────────────────────────────────────────
+// The extension is loaded unpacked, so it never updates itself: after a
+// MeetLoaf update the browser keeps running the old code until someone hits
+// reload. Its hand-off links carry its version (?mlext=0.2.4); we remember
+// the last one seen and, when it's older than the copy bundled with this
+// MeetLoaf, say so once. Kept in userData rather than config.json, which
+// people track in dotfiles and which would otherwise change on every link.
+// Links without a stamp (older extensions, Velja, Firefox) are ignored —
+// there's no telling those apart.
+const EXTENSION_STATE_FILE = path.join(app.getPath('userData'), 'extension-state.json');
+const EXTENSION_STAMP_RE = /([?&])mlext=([^&#]*)&?/;
+
+function stripExtensionStamp(raw) {
+  return raw.replace(EXTENSION_STAMP_RE, (_m, sep) => sep).replace(/[?&](?=#|$)/, '');
+}
+
+function readExtensionState() {
+  try {
+    return JSON.parse(fs.readFileSync(EXTENSION_STATE_FILE, 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeExtensionState(state) {
+  try {
+    fs.writeFileSync(EXTENSION_STATE_FILE, JSON.stringify(state, null, 2));
+  } catch (err) {
+    console.warn(`[meetloaf] couldn't save extension state: ${err.message}`);
+  }
+}
+
+// Numeric, dot-separated; missing parts count as 0. Returns <0, 0, >0.
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// Status for the Routing tab and the prompt: { seen, bundled, outdated }.
+function chromeExtensionStatus() {
+  const seen = readExtensionState().chrome?.version || null;
+  const bundled = bundledChromeExtensionVersion();
+  return { seen, bundled, outdated: !!(seen && bundled && compareVersions(seen, bundled) < 0) };
+}
+
+// Called with every incoming meet:// link, before it's normalized.
+function noteExtensionStamp(raw) {
+  const m = String(raw).match(EXTENSION_STAMP_RE);
+  if (!m) return;
+  const version = decodeURIComponent(m[2]);
+  if (!/^\d+(\.\d+)*$/.test(version)) return;
+  const state = readExtensionState();
+  state.chrome = { version, seenAt: new Date().toISOString() };
+  writeExtensionState(state);
+  promptIfExtensionOutdated();
+}
+
+let extensionPromptOpen = false;
+async function promptIfExtensionOutdated() {
+  const { seen, bundled, outdated } = chromeExtensionStatus();
+  if (!outdated || extensionPromptOpen) return;
+  // Once per seen→bundled pair: "Later" means later, not on every link.
+  const pair = `${seen}->${bundled}`;
+  const state = readExtensionState();
+  if (state.promptedFor === pair) return;
+  state.promptedFor = pair;
+  writeExtensionState(state);
+
+  // The link that carried the stamp is usually opening a meeting; let that
+  // get going rather than putting a sheet over the join.
+  await new Promise((r) => setTimeout(r, 4000));
+  if (!app.isReady()) return;
+  const browser = await preferredChromium();
+  const name = browser ? browser.name : 'your browser';
+  extensionPromptOpen = true;
+  try {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const opts = {
+      type: 'info',
+      buttons: ['Open Extensions', 'Show Folder', 'Later'],
+      defaultId: 0,
+      cancelId: 2,
+      message: 'Reload the MeetLoaf browser extension',
+      detail: `Your browser is running version ${seen} of the MeetLoaf extension, but this MeetLoaf comes with ${bundled}. ` +
+        `Unpacked extensions don't update themselves — open ${name}'s extensions page and click the reload button on MeetLoaf Router.`
+    };
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    if (response === 0) openChromeExtensions();
+    else if (response === 1) showChromeExtensionFolder();
+  } finally {
+    extensionPromptOpen = false;
+  }
+}
+
+function showChromeExtensionFolder() {
   const dir = chromeExtensionDir();
   if (!fs.existsSync(dir)) return { ok: false, error: 'Extension folder missing' };
   // Reveal the folder itself, selected, in Finder / Explorer.
   shell.showItemInFolder(dir);
   return { ok: true };
-});
+}
 
-ipcMain.handle('chrome:open-extensions', async () => {
-  const browser = findChromium();
+async function openChromeExtensions() {
+  const browser = await preferredChromium();
   if (!browser) return { ok: false, error: 'No Chromium-based browser found' };
   // chrome://extensions works for Chrome, Arc, Brave, Edge, and Vivaldi —
   // they all interpret chrome:// URLs internally even when launched from
   // the shell.
   return openInBrowser(browser, 'chrome://extensions');
+}
+
+ipcMain.handle('chrome:detect', async () => {
+  const browser = await preferredChromium();
+  const dir = chromeExtensionDir();
+  return {
+    chromium: browser,                  // { name, path } or null
+    extensionBundled: fs.existsSync(path.join(dir, 'manifest.json')),
+    extensionPath: dir,
+    extension: chromeExtensionStatus()  // { seen, bundled, outdated }
+  };
 });
+
+ipcMain.handle('chrome:show-folder', () => showChromeExtensionFolder());
+
+ipcMain.handle('chrome:open-extensions', () => openChromeExtensions());
 
 ipcMain.handle('firefox:install-extension', async () => {
   const ff = findFirefox();
@@ -1101,7 +1274,7 @@ ipcMain.handle('firefox:install-extension', async () => {
 });
 
 function normalizeMeetUrl(raw) {
-  const stripped = raw.replace(/^meet:\/\//, '').replace(/^\/+/, '');
+  const stripped = stripExtensionStamp(raw).replace(/^meet:\/\//, '').replace(/^\/+/, '');
   if (stripped.startsWith('http://') || stripped.startsWith('https://')) return stripped;
   if (stripped.startsWith('meet.google.com')) return 'https://' + stripped;
   return 'https://meet.google.com/' + stripped;
@@ -1241,6 +1414,7 @@ function createWindow() {
     // Only needed under the hidden macOS title bar; with a native frame the
     // strip would just eat clicks on Meet's header.
     if (IS_MAC) mainWindow.webContents.insertCSS(DRAG_REGION_CSS).catch(() => {});
+    syncPresentTabToPage();
     mainWindow.webContents.executeJavaScript(MEET_INJECTION).catch(() => {});
   });
 
@@ -1510,6 +1684,7 @@ function toggleMainWindow() {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Show / Hide MeetLoaf', click: () => toggleMainWindow() },
+    ...(presentTabEnabled() ? [{ label: 'Present a Browser Tab…', click: () => presentInBrowser() }] : []),
     { type: 'separator' },
     { label: 'Settings…', click: () => openSettingsWindow() },
     { label: 'Check for Updates…', click: () => checkForUpdates({ manual: true }) },
@@ -1902,7 +2077,12 @@ ipcMain.handle('config:get', () => {
 ipcMain.handle('config:save', (_e, next) => {
   if (!next || typeof next !== 'object') return { ok: false, error: 'Invalid config' };
   const result = saveConfig(next);
-  if (result.ok) registerShortcuts();
+  if (result.ok) {
+    registerShortcuts();
+    // The View menu's "Present a Browser Tab…" follows the setting.
+    buildMenu();
+    syncPresentTabToPage();
+  }
   return result;
 });
 
@@ -1963,6 +2143,7 @@ function buildMenu() {
         { role: 'zoomOut' },
         { type: 'separator' },
         { label: 'Pop Out / Re-dock Presentation', click: () => togglePresentationWindow() },
+        { label: 'Present a Browser Tab\u2026', visible: presentTabEnabled(), click: () => presentInBrowser() },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
@@ -2051,7 +2232,11 @@ function registerShortcuts() {
     }
   };
 
-  for (const [name, fn] of Object.entries(SHORTCUT_ACTIONS)) bind(s[name], fn);
+  for (const [name, fn] of Object.entries(SHORTCUT_ACTIONS)) {
+    // Switched off in Settings: don't hold on to its key either.
+    if (name === 'presentTab' && !presentTabEnabled()) continue;
+    bind(s[name], fn);
+  }
 }
 
 // Keyed by config.shortcuts name. Also reachable as `meetloaf --shortcut=<name>`
@@ -2066,6 +2251,7 @@ const SHORTCUT_ACTIONS = {
   toggleWindow: () => toggleMainWindow(),
   newMeeting: () => startInstantMeeting(),
   presentation: () => togglePresentationWindow(),
+  presentTab: () => presentInBrowser(),
   leave: () => clickByAriaLabel('leave call')
 };
 
@@ -2088,7 +2274,10 @@ if (!gotLock) {
       mainWindow.focus();
     }
     const deepLink = argv.find((a) => a.startsWith('meet://'));
-    if (deepLink) handleDeepLink(deepLink);
+    if (deepLink) {
+      noteExtensionStamp(deepLink);
+      handleDeepLink(deepLink);
+    }
   });
 
   // On Windows the registration is a command line. Under `npm start` the
@@ -2102,6 +2291,7 @@ if (!gotLock) {
 
   app.on('open-url', (event, url) => {
     event.preventDefault();
+    noteExtensionStamp(url);
     // If we're already running, route it now. If the URL is what launched us
     // (open-url fires before whenReady), just queue it: the startup path opens
     // pendingDeepLink after loadConfig + createWindow. Calling handleDeepLink
@@ -2167,7 +2357,10 @@ if (!gotLock) {
     // via open-url, so capture it before createWindow() opens the window.
     if (!pendingDeepLink) {
       const argvDeepLink = process.argv.find((a) => a.startsWith('meet://'));
-      if (argvDeepLink) pendingDeepLink = normalizeMeetUrl(argvDeepLink);
+      if (argvDeepLink) {
+        noteExtensionStamp(argvDeepLink);
+        pendingDeepLink = normalizeMeetUrl(argvDeepLink);
+      }
     }
 
     buildMenu();

@@ -116,7 +116,7 @@ AppImages need FUSE 2: `sudo apt install libfuse2t64` on 24.04 (`libfuse2` on 22
 Differences from macOS:
 
 - **Shortcuts** use Ctrl where macOS uses ⌘, as on Windows.
-- **Global hotkeys on Wayland don't register from inside the app.** On GNOME 50, every `globalShortcut.register()` fails ([electron#51875](https://github.com/electron/electron/issues/51875); still failing on Electron 44.7). MeetLoaf logs `Shortcut unavailable` for each one. Bind them in GNOME instead: every action can be triggered by running `meetloaf --shortcut=<name>` (`mute`, `camera`, `hand`, `toggleWindow`, `newMeeting`, `leave`). The running app performs it without raising its window. Add one under *Settings → Keyboard → View and Customise Shortcuts → Custom Shortcuts*, or from a terminal:
+- **Global hotkeys on Wayland don't register from inside the app.** On GNOME 50, every `globalShortcut.register()` fails ([electron#51875](https://github.com/electron/electron/issues/51875); still failing on Electron 44.7). MeetLoaf logs `Shortcut unavailable` for each one. Bind them in GNOME instead: every action can be triggered by running `meetloaf --shortcut=<name>` (`mute`, `camera`, `hand`, `toggleWindow`, `newMeeting`, `presentation`, `presentTab`, `leave`). The running app performs it without raising its window. Add one under *Settings → Keyboard → View and Customise Shortcuts → Custom Shortcuts*, or from a terminal:
   ```sh
   p=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/meetloaf-mute/
   s=org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$p
@@ -193,9 +193,10 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
     "hand": "Cmd+Shift+H",
     "toggleWindow": "Cmd+Shift+Backslash",
     "newMeeting": "Cmd+Shift+N",
+    "presentTab": "Cmd+Shift+P",
     "leave": { "accelerator": "Cmd+W", "global": false }
   },
-  "window": { "width": 1200, "height": 800, "popOutPresentation": true }
+  "window": { "width": 1200, "height": 800, "popOutPresentation": true, "presentBrowserTab": true }
 }
 ```
 
@@ -219,6 +220,16 @@ Worth knowing it is **not** the *Picture-in-picture* menu item, which uses the D
 
 Detection only covers *other people's* presentations — your own share is excluded, since a window showing the screen you are sharing is an infinite hall of mirrors.
 
+
+### Present a browser tab
+
+MeetLoaf's screen sharing offers whole screens and windows only. Chrome's tab sharing — the tab list, tab audio, *Share this tab instead* — only exists when Chrome itself handles the share, and MeetLoaf is a separate Chromium that can't see Chrome's tabs.
+
+Hover Meet's **Share screen** button and a **Present a browser tab** option pops up above it (it's also in **View → Present a Browser Tab…**, the tray menu, and bindable as a shortcut). It opens the meeting you're in, in your default browser if it's Chromium-based (Chrome, Arc, Brave, Edge…) or else the first one installed, in Meet's **Companion mode**: `meet.google.com/xxx-yyyy-zzz?companion=1`. Companion mode joins with no mic, camera or speaker, so there's no echo. Click **Start Companion mode**, then **Present → A tab** as usual. You stay in the call in MeetLoaf; the companion shows up as a second you in the participant list while it's open.
+
+On by default. Turn it off in **Settings → Window → Present a browser tab**, or set `"window": { "presentBrowserTab": false }` — that removes the popover, the menu items and the shortcut.
+
+The Chrome extension lets `?companion=1` links through rather than handing them back to MeetLoaf, so this works with routing on. That needs extension 0.2.4 or later — reload the unpacked extension after updating.
 
 ### Setting up the Homebrew tap (one-time)
 
@@ -340,7 +351,9 @@ Settings (⌘,) → **Routing** → next to "Chrome / Chromium extension":
 
 The extension is now active. Toggle it via the puzzle-piece icon in your browser's toolbar.
 
-The first Meet link you click shows the browser's *"Open MeetLoaf?"* prompt — tick **Always allow** and click **Open**. From then on links go straight to MeetLoaf, and the hand-off tab closes itself after a 10-second countdown (or goes back, if you clicked the link from another page) — **Close now** skips the wait. **Join in the browser instead** on the hand-off tab lets that one tab load Meet normally.
+Unpacked extensions don't update themselves — after a MeetLoaf update, your browser keeps running the old extension until you click reload on it. The extension tells MeetLoaf its version with each link it hands over, and MeetLoaf prompts once (**Open Extensions** / **Show Folder**) when that's older than the copy it bundles. **Settings → Routing** shows whether the loaded extension is up to date. Extensions from before 0.2.4 don't report a version, so they can't be detected.
+
+The first Meet link you click shows the browser's *"Open MeetLoaf?"* prompt — tick **Always allow** and click **Open**. From then on links go straight to MeetLoaf, and the hand-off tab closes itself after a 10-second countdown (or goes back, if you clicked the link from another page) — **Close now** skips the wait. **Join in the browser instead** on the hand-off tab lets that one tab load Meet normally. Companion-mode links (`?companion=1`) are never redirected — see *Present a browser tab*.
 
 How it works: a `declarativeNetRequest` rule redirects `meet.google.com/xxx-yyyy-zzz` to the extension's `handoff.html` *before the request is sent*, so the Meet page never loads in the browser and never grabs the camera/mic. (An earlier version reacted to `webNavigation.onBeforeNavigate`, which can't cancel the navigation — the call opened in both the browser and MeetLoaf.)
 
