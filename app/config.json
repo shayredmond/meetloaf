@@ -21,6 +21,10 @@
       "accelerator": "",
       "global": true
     },
+    "presentation": {
+      "accelerator": "",
+      "global": true
+    },
     "leave": {
       "accelerator": "CmdOrCtrl+W",
       "global": false

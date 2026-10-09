@@ -164,13 +164,16 @@ Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/l
 
 ### Presentation pop-out
 
-When someone else starts presenting, MeetLoaf opens their shared screen in its own resizable window — drag it to a second display and the main window goes back to being the faces. Closing the window by hand dismisses it for that presentation; it comes back for the next one. The window remembers where you left it, and reopens there as long as that display is still attached.
+When someone else starts presenting, MeetLoaf asks Meet to open the shared screen in its own window — the same thing as clicking **Open in new window** on the presentation tile. Meet moves the share out, so the main window goes back to showing faces rather than showing the presentation twice.
 
-On by default. Turn it off in **Settings → Window → Pop out presentations**, or set `"window": { "popOutPresentation": false }`. **View → Pop Out Presentation** opens or closes it manually at any time.
+On by default. Turn it off in **Settings → Window → Pop out presentations**, or set `"window": { "popOutPresentation": false }`. **View → Pop Out Presentation** triggers it by hand at any time.
 
-This is not Picture-in-Picture and doesn't go near the APIs in the note above. The window is opened by the Meet page itself, so it's same-origin and shares Meet's renderer — which means the `<video>` inside it can be handed Meet's own `MediaStream` by reference. Nothing is re-captured, re-encoded or mirrored, and it costs no extra bandwidth.
+Earlier versions opened their own window and handed it Meet's `MediaStream` by reference. That worked, but it *duplicated* the presentation instead of moving it, and the window had its own failure modes. Meet's own control does the job properly and is a few hundred lines less of ours.
 
-Detection reads what Meet says about a tile rather than guessing from what its video looks like. (A 0.1.6 version scored videos on shape and size; it popped out cameras on join and was pulled in 0.1.7.) In Meet a presentation is its own tile, labelled *Name (Presentation)*, and only that tile carries the label. Your own screen share is excluded because its track is a local capture, not a remote one. Like the call-phase watcher, this relies on Meet's English labels.
+Worth knowing it is **not** the *Picture-in-picture* menu item, which uses the Document PiP API that Electron has never implemented ([electron#39633](https://github.com/electron/electron/issues/39633)) and which silently renders nothing. **Open in new window** is an ordinary popup and works.
+
+Detection only covers *other people's* presentations — your own share is excluded, since a window showing the screen you are sharing is an infinite hall of mirrors.
+
 
 ### Setting up the Homebrew tap (one-time)
 
