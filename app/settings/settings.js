@@ -482,7 +482,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         chromeInstructions.hidden = true;
         return;
       }
-      chromeStatus.textContent = `Found ${info.chromium.name}. Load the extension via developer mode:`;
+      const ext = info.extension || {};
+      if (ext.outdated) {
+        chromeStatus.textContent = `${info.chromium.name} is running extension ${ext.seen}, but MeetLoaf comes with ${ext.bundled}. Open its extensions page and click reload on MeetLoaf Router:`;
+      } else if (ext.seen) {
+        chromeStatus.textContent = `Extension ${ext.seen} is loaded in ${info.chromium.name} and up to date. To load it in another browser, use developer mode:`;
+      } else {
+        chromeStatus.textContent = `Found ${info.chromium.name}. Load the extension via developer mode:`;
+      }
       showChromeFolderBtn.hidden = false;
       openChromeExtensionsBtn.hidden = false;
       chromeInstructions.hidden = false;

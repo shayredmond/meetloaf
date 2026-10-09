@@ -303,6 +303,8 @@ Settings (⌘,) → **Routing** → next to "Chrome / Chromium extension":
 
 The extension is now active. Toggle it via the puzzle-piece icon in your browser's toolbar.
 
+Unpacked extensions don't update themselves — after a MeetLoaf update, your browser keeps running the old extension until you click reload on it. The extension tells MeetLoaf its version with each link it hands over, and MeetLoaf prompts once (**Open Extensions** / **Show Folder**) when that's older than the copy it bundles. **Settings → Routing** shows whether the loaded extension is up to date. Extensions from before 0.2.4 don't report a version, so they can't be detected.
+
 The first Meet link you click shows the browser's *"Open MeetLoaf?"* prompt — tick **Always allow** and click **Open**. From then on links go straight to MeetLoaf, and the hand-off tab closes itself after a 10-second countdown (or goes back, if you clicked the link from another page) — **Close now** skips the wait. **Join in the browser instead** on the hand-off tab lets that one tab load Meet normally. Companion-mode links (`?companion=1`) are never redirected — see *Present a browser tab*.
 
 How it works: a `declarativeNetRequest` rule redirects `meet.google.com/xxx-yyyy-zzz` to the extension's `handoff.html` *before the request is sent*, so the Meet page never loads in the browser and never grabs the camera/mic. (An earlier version reacted to `webNavigation.onBeforeNavigate`, which can't cancel the navigation — the call opened in both the browser and MeetLoaf.)

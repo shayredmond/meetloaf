@@ -1014,9 +1014,9 @@ async function presentInBrowser() {
   }
 }
 
-ipcMain.handle('firefox:detect', () => {
+ipcMain.handle('firefox:detect', async () => {
   const ff = findFirefox();
-  const chromium = findChromium();
+  const chromium = await preferredChromium();
   const xpi = path.join(__dirname, 'firefox-extension.xpi');
   return {
     firefox: ff,                    // { name, path } or null
@@ -1035,32 +1035,144 @@ function chromeExtensionDir() {
     : path.join(__dirname, '..', 'extension-chrome');
 }
 
-ipcMain.handle('chrome:detect', async () => {
-  const browser = await preferredChromium();
-  const dir = chromeExtensionDir();
-  return {
-    chromium: browser,                  // { name, path } or null
-    extensionBundled: fs.existsSync(path.join(dir, 'manifest.json')),
-    extensionPath: dir
-  };
-});
+function bundledChromeExtensionVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(chromeExtensionDir(), 'manifest.json'), 'utf8')).version || null;
+  } catch {
+    return null;
+  }
+}
 
-ipcMain.handle('chrome:show-folder', () => {
+// ─── Chrome extension version check ────────────────────────────────────────
+// The extension is loaded unpacked, so it never updates itself: after a
+// MeetLoaf update the browser keeps running the old code until someone hits
+// reload. Its hand-off links carry its version (?mlext=0.2.4); we remember
+// the last one seen and, when it's older than the copy bundled with this
+// MeetLoaf, say so once. Kept in userData rather than config.json, which
+// people track in dotfiles and which would otherwise change on every link.
+// Links without a stamp (older extensions, Velja, Firefox) are ignored —
+// there's no telling those apart.
+const EXTENSION_STATE_FILE = path.join(app.getPath('userData'), 'extension-state.json');
+const EXTENSION_STAMP_RE = /([?&])mlext=([^&#]*)&?/;
+
+function stripExtensionStamp(raw) {
+  return raw.replace(EXTENSION_STAMP_RE, (_m, sep) => sep).replace(/[?&](?=#|$)/, '');
+}
+
+function readExtensionState() {
+  try {
+    return JSON.parse(fs.readFileSync(EXTENSION_STATE_FILE, 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeExtensionState(state) {
+  try {
+    fs.writeFileSync(EXTENSION_STATE_FILE, JSON.stringify(state, null, 2));
+  } catch (err) {
+    console.warn(`[meetloaf] couldn't save extension state: ${err.message}`);
+  }
+}
+
+// Numeric, dot-separated; missing parts count as 0. Returns <0, 0, >0.
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// Status for the Routing tab and the prompt: { seen, bundled, outdated }.
+function chromeExtensionStatus() {
+  const seen = readExtensionState().chrome?.version || null;
+  const bundled = bundledChromeExtensionVersion();
+  return { seen, bundled, outdated: !!(seen && bundled && compareVersions(seen, bundled) < 0) };
+}
+
+// Called with every incoming meet:// link, before it's normalized.
+function noteExtensionStamp(raw) {
+  const m = String(raw).match(EXTENSION_STAMP_RE);
+  if (!m) return;
+  const version = decodeURIComponent(m[2]);
+  if (!/^\d+(\.\d+)*$/.test(version)) return;
+  const state = readExtensionState();
+  state.chrome = { version, seenAt: new Date().toISOString() };
+  writeExtensionState(state);
+  promptIfExtensionOutdated();
+}
+
+let extensionPromptOpen = false;
+async function promptIfExtensionOutdated() {
+  const { seen, bundled, outdated } = chromeExtensionStatus();
+  if (!outdated || extensionPromptOpen) return;
+  // Once per seen→bundled pair: "Later" means later, not on every link.
+  const pair = `${seen}->${bundled}`;
+  const state = readExtensionState();
+  if (state.promptedFor === pair) return;
+  state.promptedFor = pair;
+  writeExtensionState(state);
+
+  // The link that carried the stamp is usually opening a meeting; let that
+  // get going rather than putting a sheet over the join.
+  await new Promise((r) => setTimeout(r, 4000));
+  if (!app.isReady()) return;
+  const browser = await preferredChromium();
+  const name = browser ? browser.name : 'your browser';
+  extensionPromptOpen = true;
+  try {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const opts = {
+      type: 'info',
+      buttons: ['Open Extensions', 'Show Folder', 'Later'],
+      defaultId: 0,
+      cancelId: 2,
+      message: 'Reload the MeetLoaf browser extension',
+      detail: `Your browser is running version ${seen} of the MeetLoaf extension, but this MeetLoaf comes with ${bundled}. ` +
+        `Unpacked extensions don't update themselves — open ${name}'s extensions page and click the reload button on MeetLoaf Router.`
+    };
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+    if (response === 0) openChromeExtensions();
+    else if (response === 1) showChromeExtensionFolder();
+  } finally {
+    extensionPromptOpen = false;
+  }
+}
+
+function showChromeExtensionFolder() {
   const dir = chromeExtensionDir();
   if (!fs.existsSync(dir)) return { ok: false, error: 'Extension folder missing' };
   // Reveal the folder itself, selected, in Finder / Explorer.
   shell.showItemInFolder(dir);
   return { ok: true };
-});
+}
 
-ipcMain.handle('chrome:open-extensions', async () => {
+async function openChromeExtensions() {
   const browser = await preferredChromium();
   if (!browser) return { ok: false, error: 'No Chromium-based browser found' };
   // chrome://extensions works for Chrome, Arc, Brave, Edge, and Vivaldi —
   // they all interpret chrome:// URLs internally even when launched from
   // the shell.
   return openInBrowser(browser, 'chrome://extensions');
+}
+
+ipcMain.handle('chrome:detect', async () => {
+  const browser = await preferredChromium();
+  const dir = chromeExtensionDir();
+  return {
+    chromium: browser,                  // { name, path } or null
+    extensionBundled: fs.existsSync(path.join(dir, 'manifest.json')),
+    extensionPath: dir,
+    extension: chromeExtensionStatus()  // { seen, bundled, outdated }
+  };
 });
+
+ipcMain.handle('chrome:show-folder', () => showChromeExtensionFolder());
+
+ipcMain.handle('chrome:open-extensions', () => openChromeExtensions());
 
 ipcMain.handle('firefox:install-extension', async () => {
   const ff = findFirefox();
@@ -1077,7 +1189,7 @@ ipcMain.handle('firefox:install-extension', async () => {
 });
 
 function normalizeMeetUrl(raw) {
-  const stripped = raw.replace(/^meet:\/\//, '').replace(/^\/+/, '');
+  const stripped = stripExtensionStamp(raw).replace(/^meet:\/\//, '').replace(/^\/+/, '');
   if (stripped.startsWith('http://') || stripped.startsWith('https://')) return stripped;
   if (stripped.startsWith('meet.google.com')) return 'https://' + stripped;
   return 'https://meet.google.com/' + stripped;
@@ -2059,7 +2171,10 @@ if (!gotLock) {
       mainWindow.focus();
     }
     const deepLink = argv.find((a) => a.startsWith('meet://'));
-    if (deepLink) handleDeepLink(deepLink);
+    if (deepLink) {
+      noteExtensionStamp(deepLink);
+      handleDeepLink(deepLink);
+    }
   });
 
   // On Windows the registration is a command line. Under `npm start` the
@@ -2073,6 +2188,7 @@ if (!gotLock) {
 
   app.on('open-url', (event, url) => {
     event.preventDefault();
+    noteExtensionStamp(url);
     // If we're already running, route it now. If the URL is what launched us
     // (open-url fires before whenReady), just queue it: the startup path opens
     // pendingDeepLink after loadConfig + createWindow. Calling handleDeepLink
@@ -2135,7 +2251,10 @@ if (!gotLock) {
     // via open-url, so capture it before createWindow() opens the window.
     if (!pendingDeepLink) {
       const argvDeepLink = process.argv.find((a) => a.startsWith('meet://'));
-      if (argvDeepLink) pendingDeepLink = normalizeMeetUrl(argvDeepLink);
+      if (argvDeepLink) {
+        noteExtensionStamp(argvDeepLink);
+        pendingDeepLink = normalizeMeetUrl(argvDeepLink);
+      }
     }
 
     buildMenu();
