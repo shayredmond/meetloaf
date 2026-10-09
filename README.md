@@ -148,6 +148,7 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
     "hand": "Cmd+Shift+H",
     "toggleWindow": "Cmd+Shift+Backslash",
     "newMeeting": "Cmd+Shift+N",
+    "presentTab": "Cmd+Shift+P",
     "leave": { "accelerator": "Cmd+W", "global": false }
   },
   "window": { "width": 1200, "height": 800, "popOutPresentation": true }
@@ -171,6 +172,14 @@ On by default. Turn it off in **Settings → Window → Pop out presentations**,
 This is not Picture-in-Picture and doesn't go near the APIs in the note above. The window is opened by the Meet page itself, so it's same-origin and shares Meet's renderer — which means the `<video>` inside it can be handed Meet's own `MediaStream` by reference. Nothing is re-captured, re-encoded or mirrored, and it costs no extra bandwidth.
 
 Detection reads what Meet says about a tile rather than guessing from what its video looks like. (A 0.1.6 version scored videos on shape and size; it popped out cameras on join and was pulled in 0.1.7.) In Meet a presentation is its own tile, labelled *Name (Presentation)*, and only that tile carries the label. Your own screen share is excluded because its track is a local capture, not a remote one. Like the call-phase watcher, this relies on Meet's English labels.
+
+### Present a browser tab
+
+MeetLoaf's screen sharing offers whole screens and windows only. Chrome's tab sharing — the tab list, tab audio, *Share this tab instead* — only exists when Chrome itself handles the share, and MeetLoaf is a separate Chromium that can't see Chrome's tabs.
+
+**View → Present a Browser Tab…** (also in the tray menu, and bindable as a shortcut) opens the meeting you're in, in your default browser if it's Chromium-based (Chrome, Arc, Brave, Edge…) or else the first one installed, in Meet's **Companion mode**: `meet.google.com/xxx-yyyy-zzz?companion=1`. Companion mode joins with no mic, camera or speaker, so there's no echo. Click **Start Companion mode**, then **Present → A tab** as usual. You stay in the call in MeetLoaf; the companion shows up as a second you in the participant list while it's open.
+
+The Chrome extension lets `?companion=1` links through rather than handing them back to MeetLoaf, so this works with routing on. That needs extension 0.2.4 or later — reload the unpacked extension after updating.
 
 ### Setting up the Homebrew tap (one-time)
 
@@ -292,7 +301,7 @@ Settings (⌘,) → **Routing** → next to "Chrome / Chromium extension":
 
 The extension is now active. Toggle it via the puzzle-piece icon in your browser's toolbar.
 
-The first Meet link you click shows the browser's *"Open MeetLoaf?"* prompt — tick **Always allow** and click **Open**. From then on links go straight to MeetLoaf, and the hand-off tab closes itself after a 10-second countdown (or goes back, if you clicked the link from another page) — **Close now** skips the wait. **Join in the browser instead** on the hand-off tab lets that one tab load Meet normally.
+The first Meet link you click shows the browser's *"Open MeetLoaf?"* prompt — tick **Always allow** and click **Open**. From then on links go straight to MeetLoaf, and the hand-off tab closes itself after a 10-second countdown (or goes back, if you clicked the link from another page) — **Close now** skips the wait. **Join in the browser instead** on the hand-off tab lets that one tab load Meet normally. Companion-mode links (`?companion=1`) are never redirected — see *Present a browser tab*.
 
 How it works: a `declarativeNetRequest` rule redirects `meet.google.com/xxx-yyyy-zzz` to the extension's `handoff.html` *before the request is sent*, so the Meet page never loads in the browser and never grabs the camera/mic. (An earlier version reacted to `webNavigation.onBeforeNavigate`, which can't cancel the navigation — the call opened in both the browser and MeetLoaf.)
 

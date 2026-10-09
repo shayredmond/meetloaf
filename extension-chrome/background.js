@@ -18,11 +18,17 @@
 // it only fires when DNR didn't already catch it.
 
 const RULE_REDIRECT = 1;
+const RULE_ALLOW_COMPANION = 2;
 // Per-tab "join in the browser instead" exceptions live in session rules
 // (the only kind that can match on tabIds) with ids offset by this base.
 const TAB_ALLOW_BASE = 100000;
 
 const MEET_URL_RE = /^https?:\/\/meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:[/?#]|$)/i;
+
+// Companion mode joins without mic, camera or speaker, so it can't put you in
+// the call twice — and it's how MeetLoaf's "Present a Browser Tab" gets
+// Chrome's own tab sharing. Let these links load in the browser.
+const COMPANION_RE = /^https?:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\?(?:[^#]*&)?companion=1(?:[&#]|$)/i;
 
 function rules() {
   const handoff = chrome.runtime.getURL('handoff.html');
@@ -40,13 +46,22 @@ function rules() {
         regexFilter: '^https?://meet\\.google\\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:[/?#].*)?$',
         resourceTypes: ['main_frame']
       }
+    },
+    {
+      id: RULE_ALLOW_COMPANION,
+      priority: 2,
+      action: { type: 'allow' },
+      condition: {
+        regexFilter: '^https?://meet\\.google\\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}\\?([^#]*&)?companion=1([&#].*)?$',
+        resourceTypes: ['main_frame']
+      }
     }
   ];
 }
 
 async function applyRules(enabled) {
   await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [RULE_REDIRECT],
+    removeRuleIds: [RULE_REDIRECT, RULE_ALLOW_COMPANION],
     addRules: enabled ? rules() : []
   });
 }
@@ -90,9 +105,14 @@ chrome.action.onClicked.addListener(async () => {
 // and get caught by the redirect rule again.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'allow-in-tab' || !sender.tab) return;
-  const tabId = sender.tab.id;
+  allowMeetInTab(sender.tab.id)
+    .then(() => sendResponse({ ok: true }), (err) => sendResponse({ ok: false, error: err.message }));
+  return true; // async sendResponse
+});
+
+function allowMeetInTab(tabId) {
   allowTab(tabId);
-  chrome.declarativeNetRequest.updateSessionRules({
+  return chrome.declarativeNetRequest.updateSessionRules({
     removeRuleIds: [TAB_ALLOW_BASE + tabId],
     addRules: [{
       id: TAB_ALLOW_BASE + tabId,
@@ -104,9 +124,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         resourceTypes: ['main_frame']
       }
     }]
-  }).then(() => sendResponse({ ok: true }), (err) => sendResponse({ ok: false, error: err.message }));
-  return true; // async sendResponse
-});
+  });
+}
+
+// A Companion tab gets the same per-tab exemption as "join in the browser":
+// Meet strips ?companion=1 from the address once it loads, so a reload — or
+// one of Meet's own redirects — would otherwise be caught by the redirect
+// rule. onBeforeNavigate fires before the request, giving the session rule
+// the best chance of being in place before any redirect.
+chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+  if (details.frameId !== 0 || !COMPANION_RE.test(details.url)) return;
+  allowMeetInTab(details.tabId).catch(() => {});
+}, { url: [{ hostEquals: 'meet.google.com' }] });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [TAB_ALLOW_BASE + tabId] }).catch(() => {});
@@ -133,6 +162,7 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
   if (details.frameId !== 0) return;
   const match = details.url.match(MEET_URL_RE);
   if (!match) return;
+  if (COMPANION_RE.test(details.url)) return;
   if (!(await getEnabled())) return;
   if ((await allowedTabs()).has(details.tabId)) return;
   const code = match[1].toLowerCase();

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MeetLoaf Router",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Opens Google Meet links in the MeetLoaf desktop app.",
   "permissions": [
     "declarativeNetRequest",

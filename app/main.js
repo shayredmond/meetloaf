@@ -94,6 +94,7 @@ const DEFAULT_SHORTCUTS = {
   hand: { accelerator: '', global: true },
   toggleWindow: { accelerator: '', global: true },
   newMeeting: { accelerator: '', global: true },
+  presentTab: { accelerator: '', global: true },
   leave: { accelerator: 'CmdOrCtrl+W', global: false }
 };
 
@@ -888,9 +889,8 @@ const FIREFOX_CANDIDATES = IS_WIN ? [
   { name: 'Floorp', path: '/Applications/Floorp.app' }
 ];
 
-// Chromium-family detection is in place for future use — we don't ship
-// a Chrome extension yet, so the Routing tab won't act on these. Listed
-// here so adding the action later is a one-liner.
+// Chromium-family browsers, in preference order. Used by the Routing tab
+// (installing the extension) and by "Present a Browser Tab".
 const CHROMIUM_CANDIDATES = IS_WIN ? [
   { name: 'Google Chrome', paths: winPaths('Google\\Chrome\\Application\\chrome.exe') },
   { name: 'Google Chrome Canary', paths: winPaths('Google\\Chrome SxS\\Application\\chrome.exe') },
@@ -926,6 +926,24 @@ function findInList(candidates) {
 function findFirefox() { return findInList(FIREFOX_CANDIDATES); }
 function findChromium() { return findInList(CHROMIUM_CANDIDATES); }
 
+// The default browser if it's Chromium-based, else the first one installed.
+// Without this someone who lives in Arc but also has Chrome installed gets
+// sent to Chrome. Matched by path or name, and the default's own path is
+// used, so a copy outside /Applications still counts. Electron can't report
+// the default browser on Linux; that just falls back to the list.
+async function preferredChromium() {
+  try {
+    const info = await app.getApplicationInfoForProtocol('https://');
+    const norm = (p) => (IS_WIN ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const hit = CHROMIUM_CANDIDATES.find((c) =>
+      c.name === info.name.replace(/\.app$/, '') || (c.paths || [c.path]).some((p) => norm(p) === norm(info.path)));
+    if (hit) return { name: hit.name, path: info.path };
+  } catch {
+    // No default registered, or unsupported platform.
+  }
+  return findChromium();
+}
+
 // Open `arg` (a URL or file) in a specific browser.
 // macOS: `open -a <full path>` is unambiguous for variant browsers (Zen,
 // LibreWolf, etc.) whose canonical app name might not match what `open`
@@ -953,6 +971,31 @@ function openInBrowser(browser, arg) {
   });
 }
 
+// Present a browser tab: Chrome's tab sharing (tab list, tab audio, "share
+// this tab instead") only exists when Chrome itself serves getDisplayMedia(),
+// and MeetLoaf can only offer screens and windows. So join the same meeting
+// from the browser in Meet's Companion mode — no mic, camera or speaker, so
+// no echo and no double audio — and present from there. `?companion=1` lands
+// straight on the Companion join screen; the Chrome extension lets links
+// carrying it through instead of handing them back to MeetLoaf.
+async function presentInBrowser() {
+  const code = currentMeetingCode();
+  if (!inMeeting || !code) {
+    notify('Not in a meeting', 'Join a meeting first, then present a browser tab.');
+    return;
+  }
+  const browser = await preferredChromium();
+  if (!browser) {
+    notify('No Chrome found', 'Presenting a browser tab needs Chrome or another Chromium browser.');
+    return;
+  }
+  const res = await openInBrowser(browser, `https://meet.google.com/${code}?companion=1`);
+  if (!res.ok) {
+    console.warn(`[meetloaf] present in browser failed: ${res.error}`);
+    notify(`Couldn't open ${browser.name}`, res.error);
+  }
+}
+
 ipcMain.handle('firefox:detect', () => {
   const ff = findFirefox();
   const chromium = findChromium();
@@ -974,8 +1017,8 @@ function chromeExtensionDir() {
     : path.join(__dirname, '..', 'extension-chrome');
 }
 
-ipcMain.handle('chrome:detect', () => {
-  const browser = findChromium();
+ipcMain.handle('chrome:detect', async () => {
+  const browser = await preferredChromium();
   const dir = chromeExtensionDir();
   return {
     chromium: browser,                  // { name, path } or null
@@ -993,7 +1036,7 @@ ipcMain.handle('chrome:show-folder', () => {
 });
 
 ipcMain.handle('chrome:open-extensions', async () => {
-  const browser = findChromium();
+  const browser = await preferredChromium();
   if (!browser) return { ok: false, error: 'No Chromium-based browser found' };
   // chrome://extensions works for Chrome, Arc, Brave, Edge, and Vivaldi —
   // they all interpret chrome:// URLs internally even when launched from
@@ -1430,6 +1473,7 @@ function toggleMainWindow() {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Show / Hide MeetLoaf', click: () => toggleMainWindow() },
+    { label: 'Present a Browser Tab…', click: () => presentInBrowser() },
     { type: 'separator' },
     { label: 'Settings…', click: () => openSettingsWindow() },
     { label: 'Check for Updates…', click: () => checkForUpdates({ manual: true }) },
@@ -1878,6 +1922,7 @@ function buildMenu() {
         { role: 'zoomOut' },
         { type: 'separator' },
         { label: 'Pop Out Presentation', click: () => togglePresentationWindow() },
+        { label: 'Present a Browser Tab\u2026', click: () => presentInBrowser() },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
@@ -1975,6 +2020,7 @@ function registerShortcuts() {
   bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
   bind(s.toggleWindow, () => toggleMainWindow());
   bind(s.newMeeting, () => startInstantMeeting());
+  bind(s.presentTab, () => presentInBrowser());
   bind(s.leave, () => clickByAriaLabel('leave call'));
 }
 
