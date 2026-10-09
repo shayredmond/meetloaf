@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in MeetLoaf isn't working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MeetLoaf version
+      description: "MeetLoaf → Check for Updates… shows it"
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 26.1, Windows 11 24H2, Ubuntu 26.04…"
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Downloaded release (DMG / installer / deb / AppImage)
+        - Homebrew
+        - Built from source
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      multiple: true
+      options:
+        - App window / Meet itself
+        - Global hotkeys
+        - Link routing (meet://, browser extension, Velja)
+        - Presentation pop-out
+        - Home Assistant integration
+        - Updates / install
+        - Other
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Any `[meetloaf]` lines from DevTools (View → Toggle Developer Tools) or the terminal.
+      render: text

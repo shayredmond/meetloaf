@@ -505,3 +505,11 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 - **Presentations don't pop out:** while someone is presenting, open DevTools (View → Toggle Developer Tools) and run `__meetloafPresentationDebug()`. It lists every tile with the labels the detector saw. If no tile shows `presentation: true`, Meet's wording has changed; the patterns are at the top of the pop-out section in `app/main-inject.js`. **View → Pop Out Presentation** opens the largest remote video by hand in the meantime.
 - **Something stays switched on after I hang up:** MeetLoaf should read Meet's post-hangup screen as `post_call` and fire leave. Check DevTools for `[meetloaf] phase: post_call`; if it says `unknown`, the *Rejoin* / *Return to home screen* labels changed.
 - **Update checker never prompts:** confirm `repository.url` in `app/package.json` points to a real GitHub repo (not `OWNER/REPO`).
+
+---
+
+## License
+
+MeetLoaf is released under the [MIT License](LICENSE). Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+MeetLoaf is an independent project and is not affiliated with, endorsed by, or sponsored by Google. Google Meet is a trademark of Google LLC.

@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest something MeetLoaf should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem or workflow, rather than a specific solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+  - type: dropdown
+    id: os
+    attributes:
+      label: Which platforms does this matter on?
+      multiple: true
+      options:
+        - macOS
+        - Windows
+        - Linux
