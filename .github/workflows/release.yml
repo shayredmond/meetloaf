@@ -1,7 +1,7 @@
 name: Build & Release
 
 on:
-  # Build both platforms on every PR. Windows regressions used to surface only
+  # Build every platform on every PR. Windows regressions used to surface only
   # when someone cut a tag, which is the worst place to find them.
   pull_request:
   push:
@@ -50,6 +50,18 @@ jobs:
               app/dist/*.exe
               app/dist/latest.yml
               !app/dist/*__uninstaller*.exe
+          # Built on the oldest supported LTS: binaries link against its glibc,
+          # so a 22.04 build runs on 22.04 and 24.04, but not the reverse.
+          - os: ubuntu-22.04
+            name: Linux (x64 deb + AppImage)
+            build: npm run dist:linux
+            artifact: MeetLoaf-linux
+            # latest-linux.yml is the AppImage's update metadata, the
+            # counterpart of latest.yml above.
+            path: |
+              app/dist/*.deb
+              app/dist/*.AppImage
+              app/dist/latest-linux.yml
     defaults:
       run:
         working-directory: app
@@ -63,8 +75,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: app/package-lock.json
 
-      # macOS rasterises icon.svg with rsvg-convert; Windows uses the
-      # @resvg/resvg-js devDependency and needs nothing from the system.
+      # macOS rasterises icon.svg with rsvg-convert; Windows and Linux use the
+      # @resvg/resvg-js devDependency and need nothing from the system.
       - name: Install librsvg
         if: runner.os == 'macOS'
         run: brew install librsvg

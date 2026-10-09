@@ -7,6 +7,10 @@ const pkg = require('./package.json');
 
 const IS_MAC = process.platform === 'darwin';
 const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
+// Electron runs natively on Wayland by default, where screen capture and
+// global shortcuts go through xdg-desktop-portal rather than the app.
+const IS_WAYLAND = IS_LINUX && process.env.XDG_SESSION_TYPE === 'wayland';
 
 const MEET_URL = 'https://meet.google.com/';
 const MEETING_CODE_RE = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(\/|$)/;
@@ -25,6 +29,11 @@ const BUNDLED_CONFIG = path.join(__dirname, 'config.json');
 // dir (which doesn't move). Browser session/cache always stays in userData.
 const DEFAULT_CONFIG_DIR = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'meetloaf');
 const DEFAULT_CONFIG_PATH = path.join(DEFAULT_CONFIG_DIR, 'config.json');
+// On Linux Electron's userData is ~/.config/<name> — the very folder above —
+// so cookies and caches would land in the dotfiles dir. Give the browser
+// state its own folder, named as on macOS/Windows. Must run before anything
+// reads userData.
+if (IS_LINUX) app.setPath('userData', path.join(app.getPath('appData'), 'MeetLoaf'));
 const POINTER_FILE = path.join(app.getPath('userData'), 'config-path.txt');
 // Legacy: pre-XDG-relocation config used to live alongside Electron's
 // userData. We migrate on first launch so existing settings aren't lost.
@@ -901,6 +910,20 @@ function winPaths(rel) {
     .map((base) => path.join(base, rel));
 }
 
+// Linux browsers live on PATH-ish locations rather than one app folder, and
+// may be a snap or a flatpak. `extra` are absolute paths for tarball/PPA
+// installs; `flatpakId` adds the system and user exported launchers.
+function linuxPaths(bin, extra = [], flatpakId = null) {
+  const paths = ['/usr/bin', '/usr/local/bin', '/snap/bin'].map((dir) => path.join(dir, bin)).concat(extra);
+  if (flatpakId) {
+    paths.push(
+      path.join('/var/lib/flatpak/exports/bin', flatpakId),
+      path.join(os.homedir(), '.local/share/flatpak/exports/bin', flatpakId)
+    );
+  }
+  return paths;
+}
+
 const FIREFOX_CANDIDATES = IS_WIN ? [
   { name: 'Firefox', paths: winPaths('Mozilla Firefox\\firefox.exe') },
   { name: 'Firefox Developer Edition', paths: winPaths('Firefox Developer Edition\\firefox.exe') },
@@ -909,6 +932,16 @@ const FIREFOX_CANDIDATES = IS_WIN ? [
   { name: 'LibreWolf', paths: winPaths('LibreWolf\\librewolf.exe') },
   { name: 'Waterfox', paths: winPaths('Waterfox\\waterfox.exe') },
   { name: 'Floorp', paths: winPaths('Ablaze Floorp\\floorp.exe') }
+] : IS_LINUX ? [
+  // Ubuntu's /usr/bin/firefox is the snap shim; /snap/bin covers a removed
+  // shim, /usr/lib the Mozilla PPA/deb build, flatpak its exported launcher.
+  { name: 'Firefox', paths: linuxPaths('firefox', ['/usr/lib/firefox/firefox', '/opt/firefox/firefox'], 'org.mozilla.firefox') },
+  { name: 'Firefox Developer Edition', paths: linuxPaths('firefox-developer-edition') },
+  { name: 'Firefox ESR', paths: linuxPaths('firefox-esr') },
+  { name: 'Zen Browser', paths: linuxPaths('zen-browser', [], 'app.zen_browser.zen') },
+  { name: 'LibreWolf', paths: linuxPaths('librewolf', [], 'io.gitlab.librewolf-community') },
+  { name: 'Waterfox', paths: linuxPaths('waterfox', [], 'net.waterfox.waterfox') },
+  { name: 'Floorp', paths: linuxPaths('floorp', [], 'one.ablaze.floorp') }
 ] : [
   { name: 'Firefox', path: '/Applications/Firefox.app' },
   { name: 'Firefox Developer Edition', path: '/Applications/Firefox Developer Edition.app' },
@@ -935,6 +968,14 @@ const CHROMIUM_CANDIDATES = IS_WIN ? [
   // Last: Edge ships with Windows, so it's nearly always present and would
   // otherwise shadow the browser people actually use.
   { name: 'Microsoft Edge', paths: winPaths('Microsoft\\Edge\\Application\\msedge.exe') }
+] : IS_LINUX ? [
+  { name: 'Google Chrome', paths: linuxPaths('google-chrome', ['/opt/google/chrome/chrome'], 'com.google.Chrome') },
+  { name: 'Chromium', paths: linuxPaths('chromium', [], 'org.chromium.Chromium').concat(linuxPaths('chromium-browser')) },
+  { name: 'Brave Browser', paths: linuxPaths('brave-browser', [], 'com.brave.Browser') },
+  { name: 'Vivaldi', paths: linuxPaths('vivaldi', [], 'com.vivaldi.Vivaldi') },
+  { name: 'Opera', paths: linuxPaths('opera') },
+  { name: 'Thorium', paths: linuxPaths('thorium-browser') },
+  { name: 'Microsoft Edge', paths: linuxPaths('microsoft-edge', [], 'com.microsoft.Edge') }
 ] : [
   { name: 'Google Chrome', path: '/Applications/Google Chrome.app' },
   { name: 'Google Chrome Canary', path: '/Applications/Google Chrome Canary.app' },
@@ -1045,7 +1086,18 @@ ipcMain.handle('firefox:install-extension', async () => {
 
   // The browser sees the .xpi extension and shows its install confirmation
   // dialog.
-  return openInBrowser(ff, xpi);
+  if (!IS_LINUX) return openInBrowser(ff, xpi);
+
+  // Ubuntu's Firefox is a snap, confined to non-hidden files under $HOME: it
+  // can read neither /opt nor the app.asar the .xpi sits in. Hand it a copy
+  // in Downloads instead.
+  try {
+    const copy = path.join(app.getPath('downloads'), 'meetloaf-firefox-extension.xpi');
+    fs.copyFileSync(xpi, copy);
+    return openInBrowser(ff, copy);
+  } catch (err) {
+    return { ok: false, error: `Could not stage the extension: ${err.message}` };
+  }
 });
 
 function normalizeMeetUrl(raw) {
@@ -1279,10 +1331,13 @@ function versionIsNewer(latest, current) {
 let lastUpdateCheckAt = 0;
 const UPDATE_CHECK_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-// ─── Auto-update (Windows only) ────────────────────────────────────────────
+// ─── Auto-update (Windows and Linux AppImage) ──────────────────────────────
 //
-// electron-updater downloads the new installer and runs it. Windows only, and
-// that isn't an oversight: on macOS electron-updater drives Squirrel.Mac, which
+// electron-updater downloads the new installer and runs it. On Linux that only
+// applies to the AppImage ($APPIMAGE is set by its runtime), which updates by
+// swapping its own file; the .deb is owned by apt/dpkg, so it keeps the
+// notify-and-open-the-page path rather than escalating to root behind the
+// user's back. Not macOS, and that isn't an oversight: on macOS electron-updater drives Squirrel.Mac, which
 // verifies the downloaded app's code signature before applying it. MeetLoaf is
 // ad-hoc signed (no Apple Developer ID), so that check fails and there is no
 // flag to skip it — the verification is precisely what stops an update being
@@ -1298,7 +1353,7 @@ let updateDownloaded = false;
 function initAutoUpdater() {
   // Unpackaged runs have no app-update.yml, and electron-updater throws rather
   // than degrading, so `npm start` would break.
-  if (!IS_WIN || !app.isPackaged) return;
+  if (!(IS_WIN || (IS_LINUX && process.env.APPIMAGE)) || !app.isPackaged) return;
   try {
     ({ autoUpdater } = require('electron-updater'));
   } catch (err) {
@@ -1479,7 +1534,12 @@ function createTray() {
   tray.setToolTip('MeetLoaf');
   // Left-click toggles the window; right-click (and ctrl-click) opens the menu.
   tray.on('click', () => toggleMainWindow());
-  tray.on('right-click', () => tray.popUpContextMenu(buildTrayMenu()));
+  // Linux tray icons are StatusNotifierItems: the desktop draws the menu, so
+  // popUpContextMenu is a no-op there and the menu has to be attached up
+  // front. GNOME (AppIndicator) opens it on any click; that's fine, as the
+  // first item is Show / Hide.
+  if (IS_LINUX) tray.setContextMenu(buildTrayMenu());
+  else tray.on('right-click', () => tray.popUpContextMenu(buildTrayMenu()));
 }
 
 function openWelcomeWindow() {
@@ -1991,20 +2051,37 @@ function registerShortcuts() {
     }
   };
 
-  bind(s.mute, () => clickByAriaLabel('turn (on|off) microphone'));
-  bind(s.camera, () => clickByAriaLabel('turn (on|off) camera'));
-  bind(s.hand, () => clickByAriaLabel('(raise|lower) hand'));
-  bind(s.toggleWindow, () => toggleMainWindow());
-  bind(s.newMeeting, () => startInstantMeeting());
-  bind(s.presentation, () => togglePresentationWindow());
-  bind(s.leave, () => clickByAriaLabel('leave call'));
+  for (const [name, fn] of Object.entries(SHORTCUT_ACTIONS)) bind(s[name], fn);
 }
+
+// Keyed by config.shortcuts name. Also reachable as `meetloaf --shortcut=<name>`
+// (see second-instance), which is how hotkeys work where globalShortcut can't:
+// on GNOME 50 Wayland the GlobalShortcuts portal rejects Electron's bind
+// (electron/electron#51875), so the desktop's own custom shortcuts run the
+// command instead.
+const SHORTCUT_ACTIONS = {
+  mute: () => clickByAriaLabel('turn (on|off) microphone'),
+  camera: () => clickByAriaLabel('turn (on|off) camera'),
+  hand: () => clickByAriaLabel('(raise|lower) hand'),
+  toggleWindow: () => toggleMainWindow(),
+  newMeeting: () => startInstantMeeting(),
+  presentation: () => togglePresentationWindow(),
+  leave: () => clickByAriaLabel('leave call')
+};
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
+    // A hotkey fired from outside: act without raising the window, or muting
+    // from another app would yank focus into the meeting.
+    const shortcutArg = argv.find((a) => a.startsWith('--shortcut='));
+    if (shortcutArg) {
+      const action = SHORTCUT_ACTIONS[shortcutArg.slice('--shortcut='.length)];
+      if (action) action();
+      return;
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
@@ -2059,8 +2136,8 @@ if (!gotLock) {
     // source selection to ScreenCaptureKit's native picker. The function
     // arg is the fallback for older macOS where we provide our own choice.
     //
-    // Windows and Linux have no system picker, so there the handler is always
-    // what runs — and blindly taking sources[0] would share the primary
+    // Windows and Linux on X11 have no system picker, so there the handler is
+    // always what runs — and blindly taking sources[0] would share the primary
     // display without asking. Show our own picker instead.
     session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
       try {
@@ -2070,7 +2147,10 @@ if (!gotLock) {
           fetchWindowIcons: true
         });
         if (!sources.length) return callback({});
-        if (IS_MAC) return callback({ video: sources[0] });
+        // On Wayland, getSources() itself raised the xdg-desktop-portal
+        // picker and returns only what the user chose there — a second
+        // picker of our own would just ask the same question again.
+        if (IS_MAC || IS_WAYLAND) return callback({ video: sources[0] });
         const choice = await pickDisplaySource(sources);
         if (!choice) return callback({});
         const video = sources.find((s) => s.id === choice.id);
