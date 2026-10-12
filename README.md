@@ -530,4 +530,6 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 
 MeetLoaf is released under the [MIT License](LICENSE). Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+**No warranty.** MeetLoaf is a free side project, provided as is, with no warranty of any kind. It is not guaranteed to work, to be secure, or to keep working when Google changes Meet. You use it at your own risk, and the authors and contributors are not liable for any damage or loss that comes from using it. The [LICENSE](LICENSE) has the full legal wording; this paragraph is a plain-English summary of it, not a replacement.
+
 MeetLoaf is an independent project and is not affiliated with, endorsed by, or sponsored by Google. Google Meet is a trademark of Google LLC.

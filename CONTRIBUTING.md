@@ -37,4 +37,14 @@ Most of MeetLoaf's page integration matches Meet's button labels and DOM, and Go
 - Update the README if you change behaviour, install steps or settings.
 - Don't bump the version; that happens at release time.
 
-By submitting a pull request you agree that your contribution is licensed under the [MIT License](LICENSE).
+## Your responsibility for what you submit
+
+AI-assisted contributions are fine, but you're the author of whatever you submit, however it was written. By opening a pull request you confirm that:
+
+- you've read and understood every line of it, and tested it;
+- it does only what the description says, with no hidden behaviour, telemetry, network calls or obfuscated code;
+- you have the right to submit it, and it doesn't copy code under an incompatible licence.
+
+Pull requests that look unreviewed, or that add network access, new dependencies or remote code loading without a clear reason, will be closed.
+
+By submitting a pull request you agree that your contribution is licensed under the [MIT License](LICENSE), and that it is provided without warranty on the same terms as the rest of MeetLoaf.
