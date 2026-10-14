@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, powerSaveBlocker, powerMonitor, screen } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -363,6 +363,10 @@ function meetDarkThemeEnabled() {
   return config.window?.meetDarkTheme !== false;
 }
 
+// How long after a wake, unlock or display change to re-send the override.
+const MEET_THEME_RESUME_MS = 2000;
+const MEET_THEME_RESUME_LATE_MS = 10000;
+
 function meetDarkWanted() {
   return meetDarkThemeEnabled() && nativeTheme.shouldUseDarkColors;
 }
@@ -381,15 +385,30 @@ function mainWindowBackground() {
 // acknowledged the override it is part of the session's state and is carried
 // across navigations and renderer swaps, so each new document paints dark
 // from its first frame. Resolves once the renderer has acknowledged.
-function applyMeetTheme() {
+// Set when applyMeetTheme() detaches on purpose, so the 'detach' handler in
+// createWindow() doesn't take it for a session lost and re-apply on its own.
+// A deadline rather than a flag, since the event may arrive after detach()
+// has returned.
+let meetThemeDetachingUntil = 0;
+
+// `fresh` tears the debugger session down and builds it again before sending
+// the override. Needed after a sleep: the session reports attached and the
+// command is accepted, yet the page stays light — the renderer behind the
+// session has lost the emulation state and only a new session restores it.
+// It's what toggling the setting off and on does, which was the thing that
+// worked.
+function applyMeetTheme({ fresh = false } = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return Promise.resolve();
   const wc = mainWindow.webContents;
   const want = meetDarkWanted();
   mainWindow.setBackgroundColor(mainWindowBackground());
   const dbg = wc.debugger;
-  if (!want) {
-    if (dbg.isAttached()) dbg.detach();
-    return Promise.resolve();
+  if (!want || fresh) {
+    if (dbg.isAttached()) {
+      meetThemeDetachingUntil = Date.now() + 1000;
+      dbg.detach();
+    }
+    if (!want) return Promise.resolve();
   }
   try {
     if (!dbg.isAttached()) dbg.attach('1.3');
@@ -1524,6 +1543,17 @@ function createWindow() {
   mainWindow.webContents.on('did-navigate', () => {
     if (meetDarkWanted()) applyMeetTheme();
   });
+  // The override lives in the debugger session, so it goes when the session
+  // does — a renderer swap Chromium couldn't carry it across, DevTools being
+  // opened on the window, a wake from a long sleep. Short of a navigation
+  // nothing above would notice, and the page would sit there in light.
+  // Deferred so that DevTools, if that's what took the session, has settled;
+  // if it still holds the window the re-attach fails and is logged, no worse.
+  mainWindow.webContents.debugger.on('detach', (_e, reason) => {
+    if (!meetDarkWanted() || Date.now() < meetThemeDetachingUntil) return;
+    console.log(`[meetloaf] dark theme session detached (${reason}), re-applying`);
+    setTimeout(() => applyMeetTheme(), 1000);
+  });
   startPhasePoll();
 
   // Inject a thin draggable strip across the top of every Meet page so the
@@ -2517,6 +2547,25 @@ if (!gotLock) {
 
     // OS light/dark switches reach the page live, no reload.
     nativeTheme.on('updated', () => applyMeetTheme());
+    // Coming back from a long sleep the page has been seen in light, with no
+    // navigation and no theme change to hook. Whatever Chromium lost along
+    // the way, re-sending the override is one round trip and a no-op when
+    // nothing was. The delay lets the renderer and displays come back first;
+    // a display returning later gets its own re-apply below.
+    // Twice: once when the renderer is back, once more when the displays
+    // are — a DisplayLink screen in particular returns well after the wake.
+    const reapplyMeetThemeLater = (reason) => () => {
+      for (const delay of [MEET_THEME_RESUME_MS, MEET_THEME_RESUME_LATE_MS]) {
+        setTimeout(() => {
+          if (!meetDarkWanted()) return;
+          console.log(`[meetloaf] dark theme re-applied after ${reason}`);
+          applyMeetTheme({ fresh: true });
+        }, delay);
+      }
+    };
+    powerMonitor.on('resume', reapplyMeetThemeLater('resume'));
+    powerMonitor.on('unlock-screen', reapplyMeetThemeLater('unlock'));
+    screen.on('display-added', reapplyMeetThemeLater('display added'));
 
     buildMenu();
     createWindow();
