@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('meetloaf', {
   platform: process.platform,
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (next) => ipcRenderer.invoke('config:save', next),
+  listScreens: () => ipcRenderer.invoke('screens:list'),
+  onScreensChanged: (fn) => ipcRenderer.on('screens:changed', (_e, displays) => fn(displays)),
   recordingStart: () => ipcRenderer.send('recording:start'),
   recordingStop: () => ipcRenderer.send('recording:stop'),
   resize: (height) => ipcRenderer.send('settings:resize', height),

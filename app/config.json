@@ -34,7 +34,15 @@
     "width": 1200,
     "height": 800,
     "alwaysOnTop": false,
-    "popOutPresentation": true
+    "popOutPresentation": true,
+    "startFullScreen": false
+  },
+  "screens": {
+    "mainWindow": null,
+    "presentationWindow": null,
+    "presentationSize": "default",
+    "presentationWidth": 1280,
+    "presentationHeight": 800
   },
   "homeAssistant": {
     "enabled": false,

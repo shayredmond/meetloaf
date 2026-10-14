@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, powerSaveBlocker, screen } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -83,7 +83,7 @@ let inMeeting = false;
 // We stash the resolved target here so createWindow() opens it as the initial
 // page instead of the Meet home page.
 let pendingDeepLink = null;
-let config = { shortcuts: {}, window: { width: 1200, height: 800 }, homeAssistant: {} };
+let config = { shortcuts: {}, window: { width: 1200, height: 800 }, screens: {}, homeAssistant: {} };
 
 // Built-in shortcut defaults. Seeded into every loaded config so that keys
 // absent from an existing config.json (e.g. after an upgrade) still get their
@@ -152,7 +152,10 @@ const WINDOW_DEFAULTS = {
   // macOS only: run as a menu-bar app with no Dock icon. Ignored elsewhere.
   hideDock: false,
   // Darken Meet's home page and pre-join screen while the OS is in dark mode.
-  meetDarkTheme: true
+  meetDarkTheme: true,
+  // Open the Meet window in full screen rather than at width × height. The
+  // size still applies once it leaves full screen.
+  startFullScreen: false
 };
 
 function normalizeWindow(raw) {
@@ -165,6 +168,46 @@ function normalizeWindow(raw) {
   out.presentBrowserTab = src.presentBrowserTab !== false;
   out.hideDock = src.hideDock === true;
   out.meetDarkTheme = src.meetDarkTheme !== false;
+  out.startFullScreen = src.startFullScreen === true;
+  return out;
+}
+
+// Which display each window opens on, for people with more than one. A
+// screen is stored as { label, id } — the label is what the OS calls the
+// monitor ("LG ULTRAFINE"), the id is Electron's display id. Both are kept
+// because neither is reliable alone: ids change across reboots on Windows,
+// and two identical monitors share a label. null means "wherever the OS
+// puts it", which is what happened before this setting existed, so an
+// upgraded config changes nothing.
+const PRESENTATION_SIZES = ['default', 'fill', 'custom'];
+const SCREENS_DEFAULTS = {
+  mainWindow: null,
+  presentationWindow: null,
+  // 'default' leaves Meet's own size alone, 'fill' maximizes the window on
+  // its screen, 'custom' uses presentationWidth × presentationHeight.
+  presentationSize: 'default',
+  presentationWidth: 1280,
+  presentationHeight: 800
+};
+
+function normalizeScreenRef(raw) {
+  // A bare string is a label, for hand-edited configs.
+  if (typeof raw === 'string') return raw.trim() ? { label: raw.trim(), id: null } : null;
+  if (!raw || typeof raw !== 'object') return null;
+  const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+  const id = Number.isFinite(raw.id) ? raw.id : null;
+  if (!label && id === null) return null;
+  return { label, id };
+}
+
+function normalizeScreens(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const out = { ...SCREENS_DEFAULTS };
+  out.mainWindow = normalizeScreenRef(src.mainWindow);
+  out.presentationWindow = normalizeScreenRef(src.presentationWindow);
+  if (PRESENTATION_SIZES.includes(src.presentationSize)) out.presentationSize = src.presentationSize;
+  if (Number.isFinite(src.presentationWidth) && src.presentationWidth > 0) out.presentationWidth = Math.round(src.presentationWidth);
+  if (Number.isFinite(src.presentationHeight) && src.presentationHeight > 0) out.presentationHeight = Math.round(src.presentationHeight);
   return out;
 }
 
@@ -258,6 +301,7 @@ function loadConfig() {
       ...config,
       ...parsed,
       window: normalizeWindow(parsed.window),
+      screens: normalizeScreens(parsed.screens),
       shortcuts: normalizeShortcuts(parsed.shortcuts),
       homeAssistant: normalizeHomeAssistant(parsed.homeAssistant)
     };
@@ -274,12 +318,14 @@ function saveConfig(next) {
       ...config,
       ...next,
       window: normalizeWindow(next.window),
+      screens: normalizeScreens(next.screens),
       shortcuts: normalizeShortcuts(next.shortcuts),
       homeAssistant: normalizeHomeAssistant(next.homeAssistant)
     };
     applyWindowPrefs();
     applyDockPrefs();
     applyMeetTheme();
+    applyScreenPrefs();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -338,6 +384,126 @@ function applyWindowPrefs() {
       settingsWindow.setAlwaysOnTop(aot, 'floating', 2);
     }
   }
+}
+
+// ─── Screens ───────────────────────────────────────────────────────────────
+//
+// Which display the Meet window and the presentation pop-out open on, for
+// people with more than one. Everything here runs after app ready, which is
+// when Electron's screen module becomes usable.
+
+function describeDisplay(d) {
+  const primary = screen.getPrimaryDisplay();
+  return {
+    id: d.id,
+    label: d.label || '',
+    primary: d.id === primary.id,
+    internal: !!d.internal,
+    width: d.size.width,
+    height: d.size.height
+  };
+}
+
+function listDisplays() {
+  return screen.getAllDisplays().map(describeDisplay);
+}
+
+// Stored { label, id } → connected display, or null when it isn't connected
+// or nothing is configured. The id is tried first because it tells twin
+// monitors apart; the label second because it outlives the id, which changes
+// across reboots on Windows. An id that now belongs to a differently-named
+// monitor has been recycled and is ignored.
+function findDisplay(ref) {
+  if (!ref) return null;
+  const displays = screen.getAllDisplays();
+  if (ref.id !== null) {
+    const byId = displays.find((d) => d.id === ref.id);
+    if (byId && (!ref.label || byId.label === ref.label)) return byId;
+  }
+  if (ref.label) {
+    const byLabel = displays.find((d) => d.label === ref.label);
+    if (byLabel) return byLabel;
+  }
+  return null;
+}
+
+// width × height centred in the display's work area, shrunk to fit. The
+// result is always within that display, so a window can't end up somewhere
+// the user can't reach.
+function centeredBounds(display, width, height) {
+  const area = display.workArea;
+  const w = Math.min(Math.round(width), area.width);
+  const h = Math.min(Math.round(height), area.height);
+  return {
+    x: area.x + Math.round((area.width - w) / 2),
+    y: area.y + Math.round((area.height - h) / 2),
+    width: w,
+    height: h
+  };
+}
+
+function mainWindowDisplay() {
+  return findDisplay(config.screens?.mainWindow);
+}
+
+// Bounds for a new Meet window. Without a configured (and connected) screen
+// the OS picks the position, as it always did.
+function mainWindowInitialBounds() {
+  const width = config.window?.width || 1200;
+  const height = config.window?.height || 800;
+  const display = mainWindowDisplay();
+  return display ? centeredBounds(display, width, height) : { width, height };
+}
+
+// Move the Meet window onto its configured screen, keeping its size. No-op
+// when nothing is configured, the screen isn't connected, or the window is
+// already there. Returns whether it moved.
+const FULL_SCREEN_SETTLE_MS = 250;
+
+function placeMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const display = mainWindowDisplay();
+  if (!display) return false;
+  const bounds = mainWindow.getBounds();
+  const current = screen.getDisplayMatching(bounds);
+  if (current.id === display.id) return false;
+  // A full-screen window owns its screen (its own Space on macOS) and can't
+  // be moved as such: leave full screen, move once that has finished — the
+  // transition is animated and asynchronous — and go full screen over there.
+  if (mainWindow.isFullScreen()) {
+    const win = mainWindow;
+    win.once('leave-full-screen', () => {
+      // AppKit puts the pre-full-screen frame back after this fires, which
+      // would undo a move made right away, so let that land first.
+      setTimeout(() => {
+        if (win.isDestroyed() || win.isFullScreen()) return;
+        const { width, height } = win.getBounds();
+        win.setBounds(centeredBounds(display, width, height));
+        win.setFullScreen(true);
+      }, FULL_SCREEN_SETTLE_MS);
+    });
+    win.setFullScreen(false);
+    return true;
+  }
+  // Maximized fills whichever screen the window is on, so a maximized window
+  // is moved at its configured size and maximized again over there.
+  // isMaximized() alone doesn't cut it on macOS: for a zoomed window it asks
+  // AppKit's isZoomed, which compares against a "standard frame" that doesn't
+  // always match what zoom produced, so a window filling its work area counts.
+  const wasMaximized = mainWindow.isMaximized() || fillsWorkArea(bounds, current.workArea);
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  const size = wasMaximized
+    ? { width: config.window?.width || 1200, height: config.window?.height || 800 }
+    : bounds;
+  mainWindow.setBounds(centeredBounds(display, size.width, size.height));
+  if (wasMaximized) mainWindow.maximize();
+  return true;
+}
+
+function fillsWorkArea(bounds, area) {
+  const near = (a, b) => Math.abs(a - b) <= 2;
+  return near(bounds.x, area.x) && near(bounds.y, area.y) &&
+    near(bounds.width, area.width) && near(bounds.height, area.height);
 }
 
 // ─── Dark theme for Meet's home page ───────────────────────────────────────
@@ -457,6 +623,75 @@ function presentationWindowOpen() {
   return !!(presentationWin && !presentationWin.isDestroyed());
 }
 
+// Where the presentation window goes, from the Screens settings. null means
+// nothing is configured that applies right now — Meet's own placement stands.
+// `display` is null when a size is set but no screen (or the screen isn't
+// connected): the window then stays on whichever screen Meet opened it on.
+function presentationPlacement() {
+  const s = config.screens || {};
+  const display = findDisplay(s.presentationWindow);
+  const size = s.presentationSize || 'default';
+  if (!display && size === 'default') return null;
+  return { display, size, width: s.presentationWidth, height: s.presentationHeight };
+}
+
+// Meet opens the presentation window itself, at a size of its choosing. The
+// next window.open from the Meet page while in a call with nothing popped out
+// is that window, so this is where the open handler finds out whether to
+// intervene. Mid-call auth popups are https and never reach it.
+function expectingPresentationWindow() {
+  return phase === 'in_call' && !presentationWindowOpen() && presentationPlacement() !== null;
+}
+
+// Bounds for a window on `display` under the configured size, or null when
+// only the window's own size will do (and it doesn't exist yet).
+function presentationBoundsOn(display, placement, currentBounds) {
+  if (placement.size === 'fill') return { ...display.workArea };
+  if (placement.size === 'custom') return centeredBounds(display, placement.width, placement.height);
+  if (!currentBounds) return null;
+  return centeredBounds(display, currentBounds.width, currentBounds.height);
+}
+
+// Put an existing presentation window where the settings say. Safe to call
+// on one that is already there; setBounds with the same rect is a no-op.
+function placePresentationWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  const placement = presentationPlacement();
+  if (!placement) return;
+  const current = win.getBounds();
+  const display = placement.display || screen.getDisplayMatching(current);
+  const bounds = presentationBoundsOn(display, placement, current);
+  if (bounds) win.setBounds(bounds);
+}
+
+// Settings changes take effect at once, like the other window preferences,
+// so picking a screen moves the window and shows it worked. Also the answer
+// to a display being plugged in after launch and to the View menu command.
+function applyScreenPrefs() {
+  placeMainWindow();
+  if (presentationWindowOpen()) placePresentationWindow(presentationWin);
+}
+
+function screensConfigured() {
+  return !!(config.screens?.mainWindow || config.screens?.presentationWindow);
+}
+
+// Display geometry keeps shifting for a moment after a monitor connects
+// (macOS re-arranges, then re-arranges again), so let it settle first.
+const DISPLAY_SETTLE_MS = 1500;
+let displaySettleTimer = null;
+
+function onDisplaysChanged() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send('screens:changed', listDisplays());
+  }
+  if (displaySettleTimer) clearTimeout(displaySettleTimer);
+  displaySettleTimer = setTimeout(() => {
+    displaySettleTimer = null;
+    applyScreenPrefs();
+  }, DISPLAY_SETTLE_MS);
+}
+
 // Identifying it by title would mean matching "Presentation Window", which Meet
 // localises. During a call the only child windows are the auth popup and this
 // one, so the newest non-auth child is it — and if a transient popup does slip
@@ -464,6 +699,10 @@ function presentationWindowOpen() {
 function adoptPresentationWindow(win) {
   presentationWin = win;
   presentationWinSawShare = false;
+  // The open handler may have held the window back (show: false) so it could
+  // be placed before anyone saw it; either way it ends up visible.
+  placePresentationWindow(win);
+  if (!win.isVisible()) win.show();
   win.on('closed', () => {
     if (presentationWin !== win) return;
     presentationWin = null;
@@ -1460,8 +1699,9 @@ function createWindow() {
   }
 
   mainWindow = new BrowserWindow({
-    width: config.window?.width || 1200,
-    height: config.window?.height || 800,
+    // Size from config; position too when a screen is configured, so the
+    // window appears there rather than opening somewhere and jumping.
+    ...mainWindowInitialBounds(),
     // The inset traffic-light look is macOS-only. Elsewhere, hiding the
     // title bar removes the close/minimise/maximise buttons entirely, so
     // keep the native frame and tuck the menu bar behind Alt.
@@ -1484,6 +1724,9 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+
+  // After placement: full screen takes over the screen the window is on.
+  if (config.window?.startFullScreen) mainWindow.setFullScreen(true);
 
   mainWindow.webContents.setUserAgent(USER_AGENT);
   // Open straight to a deep-linked meeting if one was queued before the
@@ -1601,6 +1844,18 @@ function createWindow() {
     // in-app — handing these to shell.openExternal throws "No application
     // found to open URL" (macOS has no handler for about:blank).
     if (!/^https?:\/\//i.test(url)) {
+      // A presentation window with a configured screen or size: keep it
+      // hidden until adoptPresentationWindow() has placed it, so it doesn't
+      // open at Meet's position and then jump. The bounds go in here too when
+      // they don't depend on Meet's size, which spares a resize as well;
+      // these override the features string Meet passed to window.open.
+      if (expectingPresentationWindow()) {
+        const placement = presentationPlacement();
+        const display = placement.display ||
+          screen.getDisplayMatching(mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : { x: 0, y: 0, width: 1, height: 1 });
+        const bounds = presentationBoundsOn(display, placement, null);
+        return { action: 'allow', overrideBrowserWindowOptions: { show: false, ...(bounds || {}) } };
+      }
       return { action: 'allow' };
     }
     // Real external links go to the user's browser.
@@ -2220,6 +2475,10 @@ ipcMain.handle('config:get', () => {
   return JSON.parse(JSON.stringify(config));
 });
 
+// Connected displays, for the Screens tab. The main process decides what a
+// display is called; the renderer only draws the list.
+ipcMain.handle('screens:list', () => listDisplays());
+
 ipcMain.handle('config:save', (_e, next) => {
   if (!next || typeof next !== 'object') return { ok: false, error: 'Invalid config' };
   const result = saveConfig(next);
@@ -2289,6 +2548,8 @@ function buildMenu() {
         { role: 'zoomOut' },
         { type: 'separator' },
         { label: 'Pop Out / Re-dock Presentation', click: () => togglePresentationWindow() },
+        // For windows dragged elsewhere, or a screen that came back.
+        { label: 'Move Windows to Their Screens', visible: screensConfigured(), click: () => applyScreenPrefs() },
         { label: 'Present a Browser Tab\u2026', visible: presentTabEnabled(), click: () => presentInBrowser() },
         { type: 'separator' },
         { role: 'togglefullscreen' }
@@ -2517,6 +2778,10 @@ if (!gotLock) {
 
     // OS light/dark switches reach the page live, no reload.
     nativeTheme.on('updated', () => applyMeetTheme());
+    // A configured screen that shows up after launch (docking a laptop) gets
+    // its windows; Settings sees the new list either way.
+    screen.on('display-added', onDisplaysChanged);
+    screen.on('display-removed', onDisplaysChanged);
 
     buildMenu();
     createWindow();

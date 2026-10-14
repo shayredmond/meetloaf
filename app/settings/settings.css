@@ -569,3 +569,54 @@ footer {
   .perm-dot.warn { background: #ffd60a; }
   .perm-dot.bad { background: #ff453a; }
 }
+
+/* ─── Screens ─────────────────────────────────────────────────────────── */
+
+/* The Screens tab only exists with two or more displays; `hidden` has to
+   beat the nav item's own display mode. */
+.nav-item[hidden] { display: none; }
+
+.select-input {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 28px 7px 9px;
+  background: var(--capture-bg);
+  border: 1px solid var(--capture-border);
+  border-radius: 6px;
+  color: var(--capture-fg);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: default;
+  -webkit-app-region: no-drag;
+  /* Chevron, drawn here since appearance:none drops the native one. */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'><path fill='%23888' d='M7 10l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.select-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.18);
+}
+
+.size-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.size-fields .text-input {
+  margin-top: 0;
+  width: 90px;
+  text-align: right;
+}
+/* Spinner buttons don't fit the look and the step is 1px anyway. */
+.size-input::-webkit-inner-spin-button,
+.size-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.size-sep {
+  font-size: 12px;
+  color: var(--fg-dim);
+}

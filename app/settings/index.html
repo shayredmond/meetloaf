@@ -22,6 +22,12 @@
           </svg>
           <span>Window</span>
         </button>
+        <button type="button" class="nav-item" data-target="screens" role="tab" aria-selected="false" id="navScreens" hidden>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M3 5h11v8H3V5zm0 2v4h9V7H3zm13-1h5v12h-5V6zm2 2v8h1V8h-1zM6 15h5v2h1v2H5v-2h1v-2z"/>
+          </svg>
+          <span>Screens</span>
+        </button>
         <button type="button" class="nav-item" data-target="permissions" role="tab" aria-selected="false">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/>
@@ -166,6 +172,14 @@
 
             <div class="row toggle-row">
               <label>
+                Start in full screen
+                <span class="row-help">Open the Meet window taking over its whole screen, menu bar included. Leave full screen to get the configured size back. Which screen that is comes from Screens, when you have more than one.</span>
+              </label>
+              <button type="button" class="switch" id="startFullScreen" aria-label="Start in full screen"><span class="slider"></span></button>
+            </div>
+
+            <div class="row toggle-row">
+              <label>
                 Pop out presentations
                 <span class="row-help">When someone else shares their screen, MeetLoaf asks Meet to open their presentation in its own window, and closes it again when the share ends. The shortcut pops out and re-docks regardless of this setting.</span>
               </label>
@@ -194,6 +208,48 @@
                 <span class="row-help">When your system is in dark mode, darken Meet's home page and pre-join screen, which Google only makes in light. Nothing changes in light mode. Video and Meet's already-dark in-call UI are left as they are.</span>
               </label>
               <button type="button" class="switch" id="meetDarkTheme" aria-label="Match system dark mode in Meet"><span class="slider"></span></button>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="panel-screens" role="tabpanel" hidden>
+          <h2>Screens</h2>
+          <p class="section-desc">Which screen MeetLoaf's windows open on. Changes apply right away, and again whenever a screen is plugged in. A window you drag elsewhere stays there until <strong>View &rarr; Move Windows to Their Screens</strong>.</p>
+
+          <div class="rows">
+            <div class="row field-row">
+              <label for="mainWindowScreen">MeetLoaf window opens on</label>
+              <select class="select-input" id="mainWindowScreen" aria-label="Screen for the MeetLoaf window"></select>
+            </div>
+
+            <div class="row field-row" id="presentationScreenRow">
+              <label for="presentationWindowScreen">
+                Presentation window opens on
+                <span class="row-help">The window a shared screen pops out into.</span>
+              </label>
+              <select class="select-input" id="presentationWindowScreen" aria-label="Screen for the presentation window"></select>
+            </div>
+
+            <div class="row field-row" id="presentationSizeRow">
+              <label>
+                Presentation window size
+                <span class="row-help" id="presentationSizeHelp"></span>
+              </label>
+              <div class="segmented segmented-wide" role="radiogroup" aria-label="Presentation window size">
+                <button type="button" class="segment" data-presentation-size="default">Meet&rsquo;s default</button>
+                <button type="button" class="segment" data-presentation-size="fill">Fill the screen</button>
+                <button type="button" class="segment" data-presentation-size="custom">Custom</button>
+              </div>
+              <div class="size-fields" id="presentationSizeFields" hidden>
+                <input type="number" class="text-input size-input" id="presentationWidth" min="200" max="20000" step="1" inputmode="numeric" aria-label="Width in pixels" />
+                <span class="size-sep">&times;</span>
+                <input type="number" class="text-input size-input" id="presentationHeight" min="200" max="20000" step="1" inputmode="numeric" aria-label="Height in pixels" />
+                <span class="size-sep">px</span>
+              </div>
+            </div>
+
+            <div class="row routing-help panel-note" id="presentationScreensOff" hidden>
+              Presentations are set to stay in the main window. Turn on <strong>Pop out presentations</strong> under Window to choose where they open.
             </div>
           </div>
         </section>

@@ -197,7 +197,8 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
     "presentTab": "Cmd+Shift+P",
     "leave": { "accelerator": "Cmd+W", "global": false }
   },
-  "window": { "width": 1200, "height": 800, "popOutPresentation": true, "presentBrowserTab": true, "hideDock": false, "meetDarkTheme": true }
+  "window": { "width": 1200, "height": 800, "startFullScreen": false, "popOutPresentation": true, "presentBrowserTab": true, "hideDock": false, "meetDarkTheme": true },
+  "screens": { "mainWindow": null, "presentationWindow": null, "presentationSize": "default", "presentationWidth": 1280, "presentationHeight": 800 }
 }
 ```
 
@@ -230,6 +231,27 @@ Earlier versions opened their own window and handed it Meet's `MediaStream` by r
 Worth knowing it is **not** the *Picture-in-picture* menu item, which uses the Document PiP API that Electron has never implemented ([electron#39633](https://github.com/electron/electron/issues/39633)) and which silently renders nothing. **Open in new window** is an ordinary popup and works.
 
 Detection only covers *other people's* presentations — your own share is excluded, since a window showing the screen you are sharing is an infinite hall of mirrors.
+
+### Screens
+
+With more than one display, **Settings → Screens** chooses where MeetLoaf's windows open: the Meet window on one screen (a teleprompter next to the camera, say) and the presentation pop-out on another, at Meet's own size, filling the screen, or at a fixed width × height centred on it. The tab only appears when two or more displays are connected. Pair it with **Settings → Window → Start in full screen** to have the Meet window take over its screen.
+
+Changes apply right away, and again when a configured screen is plugged in after launch — the window moves there once the display geometry settles. A window you drag elsewhere stays put; **View → Move Windows to Their Screens** puts everything back. A full-screen window leaves full screen, moves, and goes full screen again on the other side.
+
+A screen is stored as `{ "label": "LG ULTRAFINE", "id": 2 }`; a bare `"LG ULTRAFINE"` works too when hand-editing. The id tells twin monitors apart and the label survives the id changing, which it does across reboots on Windows. A configured screen that isn't connected shows as *(not connected)* in Settings and the window opens wherever the system puts it until it comes back. `null` means the system decides, which is the default and what every earlier version did.
+
+```json
+"window": { "startFullScreen": true },
+"screens": {
+  "mainWindow": "Elgato Prompter",
+  "presentationWindow": "LG ULTRAFINE",
+  "presentationSize": "custom",
+  "presentationWidth": 1340,
+  "presentationHeight": 990
+}
+```
+
+The presentation rows only show while **Pop out presentations** is on, but the placement also applies to pop-outs you open by hand with **View → Pop Out / Re-dock Presentation**.
 
 
 ### Present a browser tab
@@ -530,6 +552,7 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 - **Home Assistant automation never fires:** hit **Test** in Settings → Home Assistant — it reports the real HTTP status. `404` on a webhook means the ID is wrong or the automation was deleted; `401`/`403` in service-call mode means the token is bad. Also check the integration is actually **Enabled**.
 - **Home Assistant fires late, at connection instead of the waiting room:** that meeting had no waiting room — starting one with **New** or `meet://new` goes straight in. The event still fires; only the head start is lost.
 - **Home Assistant doesn't fire at the waiting room:** check **Fire "join" when** is set to `Waiting room`. If it still doesn't, Meet has probably renamed the pre-join button — open DevTools (View → Toggle Developer Tools) and look for `[meetloaf] phase:` lines. `unknown` where you expected `lobby` means the label changed; the patterns are at the top of the call-phase watcher in `app/main-inject.js`.
+- **Windows open on the wrong screen:** check **Settings → Screens** — a screen listed as *(not connected)* isn't being found, which usually means the OS renamed it (the label comes from the monitor; a KVM or a hub can change it). Re-pick it from the list. If the tab is missing, Electron only sees one display. **View → Move Windows to Their Screens** re-applies the settings to windows that have been dragged elsewhere.
 - **Presentations don't pop out:** while someone is presenting, open DevTools (View → Toggle Developer Tools) and run `__meetloafPresentationDebug()`. It lists every tile with the labels the detector saw. If no tile shows `presentation: true`, Meet's wording has changed; the patterns are at the top of the pop-out section in `app/main-inject.js`. **View → Pop Out Presentation** opens the largest remote video by hand in the meantime.
 - **Something stays switched on after I hang up:** MeetLoaf should read Meet's post-hangup screen as `post_call` and fire leave. Check DevTools for `[meetloaf] phase: post_call`; if it says `unknown`, the *Rejoin* / *Return to home screen* labels changed.
 - **Update checker never prompts:** confirm `repository.url` in `app/package.json` points to a real GitHub repo (not `OWNER/REPO`).

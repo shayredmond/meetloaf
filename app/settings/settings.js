@@ -307,6 +307,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       popOutBtn.classList.toggle('checked', next);
       state.raw.window = { ...(state.raw.window || {}), popOutPresentation: next };
       persistRaw();
+      // The Screens tab's presentation rows only show while this is on.
+      syncScreensPanel();
     });
   }
 
@@ -356,6 +358,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       persistRaw();
     });
   }
+
+  // Start in full screen — same `window` section. Default off.
+  const startFsBtn = document.getElementById('startFullScreen');
+  if (startFsBtn) {
+    startFsBtn.classList.toggle('checked', cfg.window?.startFullScreen === true);
+    startFsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const next = !startFsBtn.classList.contains('checked');
+      startFsBtn.classList.toggle('checked', next);
+      state.raw.window = { ...(state.raw.window || {}), startFullScreen: next };
+      persistRaw();
+    });
+  }
+
+  setupScreens(cfg);
 
   // Permissions tab. Rows come from the main process, which decides what
   // applies to this platform — the renderer only draws what it's handed, so
@@ -746,6 +763,174 @@ function setupHomeAssistant() {
       }
     });
   });
+}
+
+// ─── Screens tab ───────────────────────────────────────────────────────────
+//
+// Only exists with two or more displays. The main process owns the display
+// list and pushes a fresh one when a monitor comes or goes; the renderer just
+// draws it. A screen is stored as { label, id }, see SCREENS_DEFAULTS in
+// main.js for why both.
+
+const SCREENS_DEFAULTS = {
+  mainWindow: null,
+  presentationWindow: null,
+  presentationSize: 'default',
+  presentationWidth: 1280,
+  presentationHeight: 800
+};
+
+const SIZE_HELP = {
+  default: 'Whatever size Meet opens it at.',
+  fill: 'As large as the screen allows, menu bar and Dock aside.',
+  custom: 'A fixed size, centred on the screen.'
+};
+
+// Re-paints the panel; the pop-out toggle on the Window tab calls it because
+// the presentation rows only show while pop-out is on.
+let syncScreensPanel = () => {};
+
+function setupScreens(cfg) {
+  const el = {
+    nav: document.getElementById('navScreens'),
+    mainSelect: document.getElementById('mainWindowScreen'),
+    presSelect: document.getElementById('presentationWindowScreen'),
+    presScreenRow: document.getElementById('presentationScreenRow'),
+    presSizeRow: document.getElementById('presentationSizeRow'),
+    presOffNote: document.getElementById('presentationScreensOff'),
+    sizeFields: document.getElementById('presentationSizeFields'),
+    sizeHelp: document.getElementById('presentationSizeHelp'),
+    width: document.getElementById('presentationWidth'),
+    height: document.getElementById('presentationHeight')
+  };
+  if (!el.nav || !el.mainSelect || !el.presSelect) return;
+  const sizeButtons = document.querySelectorAll('[data-presentation-size]');
+
+  const screens = { ...SCREENS_DEFAULTS, ...(cfg.screens || {}) };
+  let displays = [];
+
+  // Same resolution order as the main process: id (with a matching label,
+  // if one is stored), then label.
+  const indexOf = (ref) => {
+    if (!ref) return -1;
+    let i = displays.findIndex((d) => d.id === ref.id && (!ref.label || d.label === ref.label));
+    if (i < 0 && ref.label) i = displays.findIndex((d) => d.label === ref.label);
+    return i;
+  };
+
+  // Linux sometimes reports no label at all, so number them as a fallback.
+  const displayName = (d, i) => {
+    const tags = [`${d.width}×${d.height}`];
+    if (d.primary) tags.push('primary');
+    if (d.internal) tags.push('built-in');
+    return `${d.label || `Display ${i + 1}`} (${tags.join(', ')})`;
+  };
+
+  function fillSelect(select, ref) {
+    select.textContent = '';
+    const add = (value, text) => {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = text;
+      select.appendChild(o);
+    };
+    add('', 'Wherever the system puts it');
+    displays.forEach((d, i) => add(String(i), displayName(d, i)));
+    const i = indexOf(ref);
+    // A configured screen that isn't plugged in right now stays selectable
+    // as itself, so opening Settings on the road doesn't lose the setting.
+    if (ref && i < 0) add('missing', `${ref.label || `Display ${ref.id}`} (not connected)`);
+    select.value = i >= 0 ? String(i) : (ref ? 'missing' : '');
+  }
+
+  function paint() {
+    el.nav.hidden = displays.length < 2;
+    if (el.nav.hidden && el.nav.classList.contains('active')) {
+      const windowTab = document.querySelector('.nav-item[data-target="window"]');
+      if (windowTab) windowTab.click();
+    }
+    fillSelect(el.mainSelect, screens.mainWindow);
+    fillSelect(el.presSelect, screens.presentationWindow);
+    const popOut = state.raw.window?.popOutPresentation !== false;
+    el.presScreenRow.hidden = !popOut;
+    el.presSizeRow.hidden = !popOut;
+    el.presOffNote.hidden = popOut;
+    sizeButtons.forEach((b) => b.classList.toggle('selected', b.dataset.presentationSize === screens.presentationSize));
+    el.sizeFields.hidden = screens.presentationSize !== 'custom';
+    el.sizeHelp.textContent = SIZE_HELP[screens.presentationSize] || '';
+    autoresize();
+  }
+
+  // Typed sizes coalesce into one save; everything else saves at once.
+  let saveTimer = null;
+  function commit({ immediate = false } = {}) {
+    state.raw.screens = { ...screens };
+    if (saveTimer) clearTimeout(saveTimer);
+    if (immediate) {
+      persistRaw();
+      return;
+    }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persistRaw();
+    }, 600);
+  }
+
+  // undefined: the "(not connected)" entry, which keeps what's stored.
+  const refFor = (select) => {
+    if (select.value === '') return null;
+    if (select.value === 'missing') return undefined;
+    const d = displays[Number(select.value)];
+    return d ? { label: d.label, id: d.id } : null;
+  };
+
+  [['mainWindow', el.mainSelect], ['presentationWindow', el.presSelect]].forEach(([key, select]) => {
+    select.addEventListener('change', () => {
+      const ref = refFor(select);
+      if (ref === undefined) return;
+      screens[key] = ref;
+      paint();
+      commit({ immediate: true });
+    });
+  });
+
+  sizeButtons.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      screens.presentationSize = btn.dataset.presentationSize;
+      paint();
+      commit({ immediate: true });
+    });
+  });
+
+  el.width.value = screens.presentationWidth;
+  el.height.value = screens.presentationHeight;
+  [['presentationWidth', el.width], ['presentationHeight', el.height]].forEach(([key, input]) => {
+    input.addEventListener('input', () => {
+      // Half-typed or silly values keep the last good one rather than
+      // producing a window nobody can find.
+      const n = Math.round(Number(input.value));
+      if (!Number.isFinite(n) || n < 200) return;
+      screens[key] = n;
+      commit();
+    });
+    input.addEventListener('blur', () => {
+      input.value = screens[key];
+      commit({ immediate: true });
+    });
+    // Like the Home Assistant fields, clicks propagate on purpose so an
+    // in-progress shortcut recording is cancelled before typing starts.
+  });
+
+  syncScreensPanel = paint;
+  window.meetloaf.onScreensChanged((list) => {
+    displays = Array.isArray(list) ? list : [];
+    paint();
+  });
+  window.meetloaf.listScreens().then((list) => {
+    displays = Array.isArray(list) ? list : [];
+    paint();
+  }).catch(() => {});
 }
 
 window.addEventListener('blur', () => {
