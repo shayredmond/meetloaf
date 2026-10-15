@@ -72,6 +72,9 @@ resolveConfigPath();
 
 // Read once at startup; injected into every Meet page on dom-ready.
 const MEET_INJECTION = fs.readFileSync(path.join(__dirname, 'main-inject.js'), 'utf8');
+const WAYLAND_SHARE_INJECTION = IS_WAYLAND
+  ? fs.readFileSync(path.join(__dirname, 'wayland-share-inject.js'), 'utf8')
+  : '';
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -1561,6 +1564,7 @@ function createWindow() {
     if (IS_MAC) mainWindow.webContents.insertCSS(DRAG_REGION_CSS).catch(() => {});
     syncPresentTabToPage();
     mainWindow.webContents.executeJavaScript(MEET_INJECTION).catch(() => {});
+    if (IS_WAYLAND) mainWindow.webContents.executeJavaScript(WAYLAND_SHARE_INJECTION).catch(() => {});
   });
 
   mainWindow.on('close', (e) => {
@@ -2483,15 +2487,20 @@ if (!gotLock) {
     // display without asking. Show our own picker instead.
     session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
       try {
+        // On Wayland, sources are placeholders until capture starts, and
+        // rendering thumbnails for them opens the xdg-desktop-portal dialog
+        // just to grab a frame — then gives up after a few seconds and closes
+        // it, and capture opens a second one. Nothing shows thumbnails there,
+        // so don't ask for them.
         const sources = await desktopCapturer.getSources({
           types: ['screen', 'window'],
-          thumbnailSize: { width: 320, height: 180 },
-          fetchWindowIcons: true
+          thumbnailSize: IS_WAYLAND ? { width: 0, height: 0 } : { width: 320, height: 180 },
+          fetchWindowIcons: !IS_WAYLAND
         });
         if (!sources.length) return callback({});
-        // On Wayland, getSources() itself raised the xdg-desktop-portal
-        // picker and returns only what the user chose there — a second
-        // picker of our own would just ask the same question again.
+        // On Wayland the portal dialog opens when capture starts, after this
+        // callback, and is the only picker; WAYLAND_SHARE_INJECTION holds the
+        // stream back from Meet until the user has chosen there.
         if (IS_MAC || IS_WAYLAND) return callback({ video: sources[0] });
         const choice = await pickDisplaySource(sources);
         if (!choice) return callback({});
