@@ -122,6 +122,7 @@
       "main.js",
       "main-preload.js",
       "main-inject.js",
+      "wayland-share-inject.js",
       "config.json",
       "icon.icns",
       "trayTemplate.png",

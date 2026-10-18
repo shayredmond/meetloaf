@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, powerSaveBlocker, screen } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, session, dialog, shell, ipcMain, nativeTheme, desktopCapturer, clipboard, Notification, net, systemPreferences, powerSaveBlocker, powerMonitor, screen } = require('electron');
 
 const path = require('path');
 const fs = require('fs');
@@ -72,6 +72,9 @@ resolveConfigPath();
 
 // Read once at startup; injected into every Meet page on dom-ready.
 const MEET_INJECTION = fs.readFileSync(path.join(__dirname, 'main-inject.js'), 'utf8');
+const WAYLAND_SHARE_INJECTION = IS_WAYLAND
+  ? fs.readFileSync(path.join(__dirname, 'wayland-share-inject.js'), 'utf8')
+  : '';
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -529,6 +532,10 @@ function meetDarkThemeEnabled() {
   return config.window?.meetDarkTheme !== false;
 }
 
+// How long after a wake, unlock or display change to re-send the override.
+const MEET_THEME_RESUME_MS = 2000;
+const MEET_THEME_RESUME_LATE_MS = 10000;
+
 function meetDarkWanted() {
   return meetDarkThemeEnabled() && nativeTheme.shouldUseDarkColors;
 }
@@ -547,15 +554,30 @@ function mainWindowBackground() {
 // acknowledged the override it is part of the session's state and is carried
 // across navigations and renderer swaps, so each new document paints dark
 // from its first frame. Resolves once the renderer has acknowledged.
-function applyMeetTheme() {
+// Set when applyMeetTheme() detaches on purpose, so the 'detach' handler in
+// createWindow() doesn't take it for a session lost and re-apply on its own.
+// A deadline rather than a flag, since the event may arrive after detach()
+// has returned.
+let meetThemeDetachingUntil = 0;
+
+// `fresh` tears the debugger session down and builds it again before sending
+// the override. Needed after a sleep: the session reports attached and the
+// command is accepted, yet the page stays light — the renderer behind the
+// session has lost the emulation state and only a new session restores it.
+// It's what toggling the setting off and on does, which was the thing that
+// worked.
+function applyMeetTheme({ fresh = false } = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return Promise.resolve();
   const wc = mainWindow.webContents;
   const want = meetDarkWanted();
   mainWindow.setBackgroundColor(mainWindowBackground());
   const dbg = wc.debugger;
-  if (!want) {
-    if (dbg.isAttached()) dbg.detach();
-    return Promise.resolve();
+  if (!want || fresh) {
+    if (dbg.isAttached()) {
+      meetThemeDetachingUntil = Date.now() + 1000;
+      dbg.detach();
+    }
+    if (!want) return Promise.resolve();
   }
   try {
     if (!dbg.isAttached()) dbg.attach('1.3');
@@ -1767,6 +1789,17 @@ function createWindow() {
   mainWindow.webContents.on('did-navigate', () => {
     if (meetDarkWanted()) applyMeetTheme();
   });
+  // The override lives in the debugger session, so it goes when the session
+  // does — a renderer swap Chromium couldn't carry it across, DevTools being
+  // opened on the window, a wake from a long sleep. Short of a navigation
+  // nothing above would notice, and the page would sit there in light.
+  // Deferred so that DevTools, if that's what took the session, has settled;
+  // if it still holds the window the re-attach fails and is logged, no worse.
+  mainWindow.webContents.debugger.on('detach', (_e, reason) => {
+    if (!meetDarkWanted() || Date.now() < meetThemeDetachingUntil) return;
+    console.log(`[meetloaf] dark theme session detached (${reason}), re-applying`);
+    setTimeout(() => applyMeetTheme(), 1000);
+  });
   startPhasePoll();
 
   // Inject a thin draggable strip across the top of every Meet page so the
@@ -1804,6 +1837,7 @@ function createWindow() {
     if (IS_MAC) mainWindow.webContents.insertCSS(DRAG_REGION_CSS).catch(() => {});
     syncPresentTabToPage();
     mainWindow.webContents.executeJavaScript(MEET_INJECTION).catch(() => {});
+    if (IS_WAYLAND) mainWindow.webContents.executeJavaScript(WAYLAND_SHARE_INJECTION).catch(() => {});
   });
 
   mainWindow.on('close', (e) => {
@@ -2744,15 +2778,20 @@ if (!gotLock) {
     // display without asking. Show our own picker instead.
     session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
       try {
+        // On Wayland, sources are placeholders until capture starts, and
+        // rendering thumbnails for them opens the xdg-desktop-portal dialog
+        // just to grab a frame — then gives up after a few seconds and closes
+        // it, and capture opens a second one. Nothing shows thumbnails there,
+        // so don't ask for them.
         const sources = await desktopCapturer.getSources({
           types: ['screen', 'window'],
-          thumbnailSize: { width: 320, height: 180 },
-          fetchWindowIcons: true
+          thumbnailSize: IS_WAYLAND ? { width: 0, height: 0 } : { width: 320, height: 180 },
+          fetchWindowIcons: !IS_WAYLAND
         });
         if (!sources.length) return callback({});
-        // On Wayland, getSources() itself raised the xdg-desktop-portal
-        // picker and returns only what the user chose there — a second
-        // picker of our own would just ask the same question again.
+        // On Wayland the portal dialog opens when capture starts, after this
+        // callback, and is the only picker; WAYLAND_SHARE_INJECTION holds the
+        // stream back from Meet until the user has chosen there.
         if (IS_MAC || IS_WAYLAND) return callback({ video: sources[0] });
         const choice = await pickDisplaySource(sources);
         if (!choice) return callback({});
@@ -2782,6 +2821,25 @@ if (!gotLock) {
     // its windows; Settings sees the new list either way.
     screen.on('display-added', onDisplaysChanged);
     screen.on('display-removed', onDisplaysChanged);
+    // Coming back from a long sleep the page has been seen in light, with no
+    // navigation and no theme change to hook. Whatever Chromium lost along
+    // the way, re-sending the override is one round trip and a no-op when
+    // nothing was. The delay lets the renderer and displays come back first;
+    // a display returning later gets its own re-apply below.
+    // Twice: once when the renderer is back, once more when the displays
+    // are — a DisplayLink screen in particular returns well after the wake.
+    const reapplyMeetThemeLater = (reason) => () => {
+      for (const delay of [MEET_THEME_RESUME_MS, MEET_THEME_RESUME_LATE_MS]) {
+        setTimeout(() => {
+          if (!meetDarkWanted()) return;
+          console.log(`[meetloaf] dark theme re-applied after ${reason}`);
+          applyMeetTheme({ fresh: true });
+        }, delay);
+      }
+    };
+    powerMonitor.on('resume', reapplyMeetThemeLater('resume'));
+    powerMonitor.on('unlock-screen', reapplyMeetThemeLater('unlock'));
+    screen.on('display-added', reapplyMeetThemeLater('display added'));
 
     buildMenu();
     createWindow();
