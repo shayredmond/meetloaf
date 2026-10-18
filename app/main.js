@@ -315,6 +315,7 @@ function loadConfig() {
 
 function saveConfig(next) {
   try {
+    const screensBefore = JSON.stringify(normalizeScreens(config.screens));
     fs.mkdirSync(path.dirname(USER_CONFIG), { recursive: true });
     fs.writeFileSync(USER_CONFIG, JSON.stringify(next, null, 2) + '\n', 'utf8');
     config = {
@@ -328,7 +329,9 @@ function saveConfig(next) {
     applyWindowPrefs();
     applyDockPrefs();
     applyMeetTheme();
-    applyScreenPrefs();
+    // Only when the Screens settings changed: saving anything else mustn't
+    // pull back a window the user dragged to another screen.
+    if (JSON.stringify(config.screens) !== screensBefore) applyScreenPrefs();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -703,10 +706,20 @@ function screensConfigured() {
 const DISPLAY_SETTLE_MS = 1500;
 let displaySettleTimer = null;
 
-function onDisplaysChanged() {
+// Whether `display` is one of the screens set in Settings → Screens.
+function isConfiguredDisplay(display) {
+  const s = config.screens || {};
+  return [s.mainWindow, s.presentationWindow].some((ref) => findDisplay(ref)?.id === display.id);
+}
+
+// Settings always gets the new list. Windows only move when a configured
+// screen arrives; any other monitor coming or going leaves them where the
+// user put them.
+function onDisplaysChanged(_e, display, added) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.webContents.send('screens:changed', listDisplays());
   }
+  if (!added || !display || !isConfiguredDisplay(display)) return;
   if (displaySettleTimer) clearTimeout(displaySettleTimer);
   displaySettleTimer = setTimeout(() => {
     displaySettleTimer = null;
@@ -2819,8 +2832,8 @@ if (!gotLock) {
     nativeTheme.on('updated', () => applyMeetTheme());
     // A configured screen that shows up after launch (docking a laptop) gets
     // its windows; Settings sees the new list either way.
-    screen.on('display-added', onDisplaysChanged);
-    screen.on('display-removed', onDisplaysChanged);
+    screen.on('display-added', (e, d) => onDisplaysChanged(e, d, true));
+    screen.on('display-removed', (e, d) => onDisplaysChanged(e, d, false));
     // Coming back from a long sleep the page has been seen in light, with no
     // navigation and no theme change to hook. Whatever Chromium lost along
     // the way, re-sending the override is one round trip and a no-op when
