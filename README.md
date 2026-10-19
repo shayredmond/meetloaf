@@ -253,6 +253,22 @@ A screen is stored as `{ "label": "LG ULTRAFINE", "id": 2 }`; a bare `"LG ULTRAF
 
 The presentation rows only show while **Pop out presentations** is on, but the placement also applies to pop-outs you open by hand with **View → Pop Out / Re-dock Presentation**.
 
+#### Tiling window managers
+
+A tiling window manager such as yabai decides where the windows it tiles go, so it puts a MeetLoaf window straight back: the window flickers towards its configured screen and returns. Either stop yabai tiling MeetLoaf, so **Settings → Screens** takes effect:
+
+```sh
+yabai -m rule --add app="^MeetLoaf$" manage=off
+```
+
+or keep MeetLoaf tiled, leave its screens on the system default, and have yabai pick the display (its index from `yabai -m query --displays`). This puts the Meet window and the presentation pop-out on the same display:
+
+```sh
+yabai -m rule --add app="^MeetLoaf$" display=2
+```
+
+Add the rule to your `yabairc` to keep it. A new rule only applies to windows that open afterwards; `yabai -m rule --apply` applies it to windows already open.
+
 
 ### Present a browser tab
 
@@ -552,7 +568,7 @@ That last row means a single `input_boolean.in_a_meeting` helper mirrors your ca
 - **Home Assistant automation never fires:** hit **Test** in Settings → Home Assistant — it reports the real HTTP status. `404` on a webhook means the ID is wrong or the automation was deleted; `401`/`403` in service-call mode means the token is bad. Also check the integration is actually **Enabled**.
 - **Home Assistant fires late, at connection instead of the waiting room:** that meeting had no waiting room — starting one with **New** or `meet://new` goes straight in. The event still fires; only the head start is lost.
 - **Home Assistant doesn't fire at the waiting room:** check **Fire "join" when** is set to `Waiting room`. If it still doesn't, Meet has probably renamed the pre-join button — open DevTools (View → Toggle Developer Tools) and look for `[meetloaf] phase:` lines. `unknown` where you expected `lobby` means the label changed; the patterns are at the top of the call-phase watcher in `app/main-inject.js`.
-- **Windows open on the wrong screen:** check **Settings → Screens** — a screen listed as *(not connected)* isn't being found, which usually means the OS renamed it (the label comes from the monitor; a KVM or a hub can change it). Re-pick it from the list. If the tab is missing, Electron only sees one display. **View → Move Windows to Their Screens** re-applies the settings to windows that have been dragged elsewhere.
+- **Windows open on the wrong screen:** check **Settings → Screens** — a screen listed as *(not connected)* isn't being found, which usually means the OS renamed it (the label comes from the monitor; a KVM or a hub can change it). Re-pick it from the list. If the tab is missing, Electron only sees one display. **View → Move Windows to Their Screens** re-applies the settings to windows that have been dragged elsewhere. If the window flickers towards its screen and snaps back, a tiling window manager is moving it; see [Tiling window managers](#tiling-window-managers).
 - **Presentations don't pop out:** while someone is presenting, open DevTools (View → Toggle Developer Tools) and run `__meetloafPresentationDebug()`. It lists every tile with the labels the detector saw. If no tile shows `presentation: true`, Meet's wording has changed; the patterns are at the top of the pop-out section in `app/main-inject.js`. **View → Pop Out Presentation** opens the largest remote video by hand in the meantime.
 - **Something stays switched on after I hang up:** MeetLoaf should read Meet's post-hangup screen as `post_call` and fire leave. Check DevTools for `[meetloaf] phase: post_call`; if it says `unknown`, the *Rejoin* / *Return to home screen* labels changed.
 - **Update checker never prompts:** confirm `repository.url` in `app/package.json` points to a real GitHub repo (not `OWNER/REPO`).
