@@ -152,6 +152,7 @@ html, body {
   background: var(--accent);
 }
 
+.step p strong,
 .step ul li strong { color: var(--fg); font-weight: 600; }
 
 kbd {

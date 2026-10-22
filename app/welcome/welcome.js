@@ -4,9 +4,11 @@ const backBtn = document.getElementById('backBtn');
 const nextBtn = document.getElementById('nextBtn');
 const closeBtn = document.getElementById('closeBtn');
 
-// The Settings shortcut is ⌘, on macOS and Ctrl+, everywhere else.
+// The Settings shortcut is ⌘, on macOS and Ctrl+, everywhere else. Velja is
+// macOS-only, so the sentence recommending it goes away on other platforms.
 if (window.welcome.platform !== 'darwin') {
   document.querySelectorAll('[data-settings-key]').forEach((k) => { k.textContent = 'Ctrl + ,'; });
+  document.querySelectorAll('[data-mac-only]').forEach((el) => { el.remove(); });
 }
 
 let current = 0;
