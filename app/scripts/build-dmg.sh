@@ -43,17 +43,23 @@ codesign --verify --deep "$APP_DIR"
 # layout. Pointing hdiutil straight at the .app (as this did before) produces a
 # volume containing only the app, leaving people to find /Applications
 # themselves. The symlink costs nothing in the image — it's a link, not a copy.
+# Built with makehybrid rather than `hdiutil create -srcfolder`, which doesn't
+# write an image directly: it creates a temporary read-write one, mounts it,
+# copies the folder in, then unmounts and converts. That unmount is a race on
+# CI — Spotlight indexes the volume the moment it appears, and if it still
+# holds it the detach fails with "hdiutil: create failed - Resource busy",
+# taking the build down with it. makehybrid writes the filesystem directly and
+# mounts nothing, so there is no handle to lose. It's also ~10x quicker.
 STAGING="$(mktemp -d)"
-trap 'rm -rf "$STAGING"' EXIT
+RAW_IMG_DIR="$(mktemp -d)"
+trap 'rm -rf "$STAGING" "$RAW_IMG_DIR"' EXIT
 cp -R "$APP_DIR" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 
 rm -f "$DMG_OUT"
-hdiutil create \
-  -volname "$APP_NAME" \
-  -srcfolder "$STAGING" \
-  -ov -format UDZO \
-  "$DMG_OUT"
+hdiutil makehybrid -hfs -hfs-volume-name "$APP_NAME" \
+  -o "$RAW_IMG_DIR/raw.dmg" "$STAGING"
+hdiutil convert "$RAW_IMG_DIR/raw.dmg" -format UDZO -o "$DMG_OUT"
 
 echo ""
 echo "Built: $DMG_OUT"
