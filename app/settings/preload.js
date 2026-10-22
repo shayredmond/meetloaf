@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('meetloaf', {
   recordingStop: () => ipcRenderer.send('recording:stop'),
   resize: (height) => ipcRenderer.send('settings:resize', height),
   showWelcome: () => ipcRenderer.send('welcome:show'),
+  getVersion: () => ipcRenderer.invoke('app:version'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
   getConfigPath: () => ipcRenderer.invoke('config-path:get'),
   chooseConfigPath: () => ipcRenderer.invoke('config-path:choose'),
   resetConfigPath: () => ipcRenderer.invoke('config-path:reset'),

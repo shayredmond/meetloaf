@@ -447,6 +447,7 @@ html, body {
 }
 
 .btn-link:hover { background: rgba(10, 132, 255, 0.1); }
+.btn-link:disabled { opacity: 0.5; cursor: default; background: transparent; }
 
 /* ─── Home Assistant panel — labelled text fields ────────────────────────── */
 

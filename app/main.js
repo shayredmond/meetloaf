@@ -1685,7 +1685,7 @@ function initAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('update-available', async (info) => {
-    const { response } = await dialog.showMessageBox(mainWindow, {
+    const { response } = await dialog.showMessageBox(updateParent(), {
       type: 'info',
       message: `MeetLoaf ${info.version} is available.`,
       detail: `You have ${app.getVersion()}. Download it now?`,
@@ -1700,7 +1700,7 @@ function initAutoUpdater() {
 
   autoUpdater.on('update-downloaded', async (info) => {
     updateDownloaded = true;
-    const { response } = await dialog.showMessageBox(mainWindow, {
+    const { response } = await dialog.showMessageBox(updateParent(), {
       type: 'info',
       message: `MeetLoaf ${info.version} is ready to install.`,
       detail: 'Installing restarts the app. It will also install by itself next time you quit.',
@@ -1721,63 +1721,84 @@ function initAutoUpdater() {
   });
 }
 
-// Manual checks want to hear "you're up to date" or an error; background ones
-// should stay quiet. These two listeners are attached per-check rather than in
-// init so a background poll can't surface a dialog.
-function checkForUpdatesWin(manual) {
-  const once = (event, fn) => {
-    const wrapped = (...args) => { autoUpdater.off(event, wrapped); fn(...args); };
-    autoUpdater.on(event, wrapped);
-  };
-  if (manual) {
-    once('update-not-available', () => {
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        message: `You're on the latest version (${app.getVersion()}).`
-      });
-    });
-    once('error', (err) => {
-      dialog.showMessageBox(mainWindow, {
-        type: 'warning',
-        message: 'Could not check for updates.',
-        detail: err && err.message ? err.message : String(err)
-      });
+// Where update prompts attach. A check started from Settings puts its dialogs
+// over Settings rather than over a main window that may be sitting behind it;
+// background checks go back to the main window.
+let updateDialogParent = null;
+
+function updateParent() {
+  return updateDialogParent && !updateDialogParent.isDestroyed() ? updateDialogParent : mainWindow;
+}
+
+// Every check resolves to a plain result so Settings can show it inline:
+// { status: 'latest' | 'available' | 'error' | 'unconfigured', current, latest?, error? }.
+// Manual checks from a menu also want to hear "you're up to date" or an error
+// as a dialog; background ones, and Settings (`inline`), stay quiet about those.
+// An available update always prompts, since that's where the Download button is.
+function reportLatest(current, { manual, inline }) {
+  if (manual && !inline) {
+    dialog.showMessageBox(updateParent(), {
+      type: 'info',
+      message: `You're on the latest version (${current}).`
     });
   }
+  return { status: 'latest', current };
+}
+
+function reportError(current, err, { manual, inline }) {
+  const message = err && err.message ? err.message : String(err);
+  if (manual && !inline) {
+    dialog.showMessageBox(updateParent(), {
+      type: 'warning',
+      message: 'Could not check for updates.',
+      detail: message
+    });
+  }
+  return { status: 'error', current, error: message };
+}
+
+async function checkForUpdatesWin(opts) {
+  const current = app.getVersion();
   if (updateDownloaded) {
     // Already fetched and waiting; re-running the check would find nothing new.
     autoUpdater.emit('update-downloaded', { version: 'the downloaded update' });
-    return;
+    return { status: 'available', current };
   }
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error(`Update check failed: ${err.message}`);
-  });
+  try {
+    // 'update-available' has already prompted by the time this resolves.
+    const result = await autoUpdater.checkForUpdates();
+    const latest = result && result.updateInfo && result.updateInfo.version;
+    if (latest && versionIsNewer(latest, current)) return { status: 'available', current, latest };
+    return reportLatest(current, opts);
+  } catch (err) {
+    console.error(`Update check failed: ${err && err.message}`);
+    return reportError(current, err, opts);
+  }
 }
 
-async function checkForUpdates({ manual = false } = {}) {
-  if (!manual && Date.now() - lastUpdateCheckAt < UPDATE_CHECK_MIN_INTERVAL_MS) return;
-  if (autoUpdater) {
-    lastUpdateCheckAt = Date.now();
-    return checkForUpdatesWin(manual);
-  }
-  return checkForUpdatesViaReleasePage({ manual });
+async function checkForUpdates({ manual = false, inline = false, parent = null } = {}) {
+  if (!manual && Date.now() - lastUpdateCheckAt < UPDATE_CHECK_MIN_INTERVAL_MS) return null;
+  updateDialogParent = parent;
+  lastUpdateCheckAt = Date.now();
+  const opts = { manual, inline };
+  return autoUpdater ? checkForUpdatesWin(opts) : checkForUpdatesViaReleasePage(opts);
 }
 
 // macOS (and any unpackaged run): compare tags and offer to open the release
 // page. No download, no install — see the note above.
-async function checkForUpdatesViaReleasePage({ manual = false } = {}) {
-  lastUpdateCheckAt = Date.now();
+async function checkForUpdatesViaReleasePage(opts) {
+  const current = app.getVersion();
 
   const slug = parseRepoSlug();
   if (!slug) {
-    if (manual) {
-      dialog.showMessageBox(mainWindow, {
+    if (opts.manual && !opts.inline) {
+      dialog.showMessageBox(updateParent(), {
         type: 'info',
         message: 'Update checks are not configured.',
         detail: 'Set "repository.url" in package.json to a real GitHub repo.'
       });
     }
-    return;
+    return { status: 'unconfigured', current };
   }
 
   try {
@@ -1787,34 +1808,29 @@ async function checkForUpdatesViaReleasePage({ manual = false } = {}) {
     if (!res.ok) throw new Error(`GitHub API ${res.status}`);
     const release = await res.json();
     const latest = String(release.tag_name || '').replace(/^v/, '');
-    const current = app.getVersion();
 
-    if (latest && versionIsNewer(latest, current)) {
-      const { response } = await dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        message: `MeetLoaf ${latest} is available.`,
-        detail: `You have ${current}. Open the release page to download?`,
-        buttons: ['Download', 'Later'],
-        defaultId: 0,
-        cancelId: 1
-      });
+    if (!latest || !versionIsNewer(latest, current)) return reportLatest(current, opts);
+
+    // Not awaited: Settings should say "available" now, not after the user
+    // gets round to answering the dialog.
+    dialog.showMessageBox(updateParent(), {
+      type: 'info',
+      message: `MeetLoaf ${latest} is available.`,
+      detail: `You have ${current}. Open the release page to download?`,
+      buttons: ['Download', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    }).then(({ response }) => {
       if (response === 0) shell.openExternal(release.html_url);
-    } else if (manual) {
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        message: `You're on the latest version (${current}).`
-      });
-    }
+    });
+    return { status: 'available', current, latest };
   } catch (err) {
-    if (manual) {
-      dialog.showMessageBox(mainWindow, {
-        type: 'warning',
-        message: 'Could not check for updates.',
-        detail: err.message
-      });
-    }
+    return reportError(current, err, opts);
   }
 }
+
+ipcMain.handle('app:version', () => app.getVersion());
+ipcMain.handle('update:check', () => checkForUpdates({ manual: true, inline: true, parent: settingsWindow }));
 
 function toggleMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;

@@ -540,6 +540,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   setupHomeAssistant();
 
+  // About section: version and update check. The result shows in the row;
+  // an available update also raises the usual Download dialog over Settings.
+  const versionDisplay = document.getElementById('versionDisplay');
+  const checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
+  if (versionDisplay && checkUpdatesBtn) {
+    const version = await window.meetloaf.getVersion();
+    versionDisplay.textContent = `MeetLoaf ${version}`;
+
+    const UPDATE_COPY = {
+      latest: () => 'up to date',
+      available: (r) => (r.latest ? `${r.latest} is available` : 'an update is ready to install'),
+      unconfigured: () => 'update checks are not configured',
+      error: (r) => `couldn't check for updates (${r.error})`
+    };
+
+    checkUpdatesBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      checkUpdatesBtn.disabled = true;
+      versionDisplay.textContent = `MeetLoaf ${version} \u2014 checking\u2026`;
+      try {
+        const r = await window.meetloaf.checkForUpdates();
+        const copy = (r && UPDATE_COPY[r.status]) || UPDATE_COPY.error;
+        versionDisplay.textContent = `MeetLoaf ${version} \u2014 ${copy(r || { error: 'no response' })}`;
+      } catch (err) {
+        versionDisplay.textContent = `MeetLoaf ${version} \u2014 ${UPDATE_COPY.error({ error: err.message })}`;
+      } finally {
+        checkUpdatesBtn.disabled = false;
+      }
+    });
+  }
+
   // About section: re-run welcome tour
   const showWelcomeBtn = document.getElementById('showWelcomeBtn');
   if (showWelcomeBtn) {
