@@ -1486,10 +1486,19 @@ async function presentInBrowser() {
   }
 }
 
+// The signed Firefox extension. Packaged builds ship it in Resources/ via
+// extraResources rather than inside app.asar: Electron's fs reads into the
+// archive fine, but the browser we hand the path to can't.
+function firefoxExtensionXpi() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'firefox-extension.xpi')
+    : path.join(__dirname, 'firefox-extension.xpi');
+}
+
 ipcMain.handle('firefox:detect', async () => {
   const ff = findFirefox();
   const chromium = await preferredChromium();
-  const xpi = path.join(__dirname, 'firefox-extension.xpi');
+  const xpi = firefoxExtensionXpi();
   return {
     firefox: ff,                    // { name, path } or null
     chromium,                       // { name, path } or null — informational
@@ -1650,7 +1659,7 @@ ipcMain.handle('firefox:install-extension', async () => {
   const ff = findFirefox();
   if (!ff) return { ok: false, error: 'No Firefox-family browser found' };
 
-  const xpi = path.join(__dirname, 'firefox-extension.xpi');
+  const xpi = firefoxExtensionXpi();
   if (!fs.existsSync(xpi)) {
     return { ok: false, error: 'Extension XPI not bundled. Run extension/build.sh.' };
   }
@@ -1660,8 +1669,7 @@ ipcMain.handle('firefox:install-extension', async () => {
   if (!IS_LINUX) return openInBrowser(ff, xpi);
 
   // Ubuntu's Firefox is a snap, confined to non-hidden files under $HOME: it
-  // can read neither /opt nor the app.asar the .xpi sits in. Hand it a copy
-  // in Downloads instead.
+  // can't read /opt, where the .xpi sits. Hand it a copy in Downloads instead.
   try {
     const copy = path.join(app.getPath('downloads'), 'meetloaf-firefox-extension.xpi');
     fs.copyFileSync(xpi, copy);
