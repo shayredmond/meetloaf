@@ -130,7 +130,6 @@
       "icon.png",
       "tray.png",
       "tray@2x.png",
-      "firefox-extension.xpi",
       "package.json",
       "picker/**",
       "settings/**",
@@ -143,6 +142,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "firefox-extension.xpi",
+        "to": "firefox-extension.xpi"
       }
     ]
   },
