@@ -13,7 +13,9 @@ const IS_LINUX = process.platform === 'linux';
 const IS_WAYLAND = IS_LINUX && process.env.XDG_SESSION_TYPE === 'wayland';
 
 const MEET_URL = 'https://meet.google.com/';
-const MEETING_CODE_RE = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}(\/|$)/;
+// Meet moved meetings under /meet/ (meet.google.com/meet/abc-defg-hij) in
+// late 2026; the bare form still appears in invites and old links.
+const MEETING_CODE_RE = /^\/(?:meet\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})(\/|$)/;
 // Report the real OS so Meet shows the right shortcut hints (⌘ vs Ctrl).
 const UA_PLATFORM = IS_MAC
   ? 'Macintosh; Intel Mac OS X 10_15_7'
@@ -613,6 +615,25 @@ function autoOpenWanted() {
     !presentationWindowOpen() && !autoOpenSuppressed;
 }
 
+// Which of the autoOpenWanted() conditions is holding a detected presentation
+// back. The renderer can see the share and Meet's control and still never be
+// told to click, and nothing else says why. Logged on change, not every poll.
+// An open presentation window isn't listed: that's the normal state straight
+// after a successful pop-out, while the tile is still leaving the main window.
+let lastAutoOpenBlock = '';
+function logAutoOpenBlock(presenting) {
+  const reasons = [];
+  if (presenting && !presentationWindowOpen()) {
+    if (!popOutEnabled()) reasons.push('auto pop-out off in settings');
+    if (phase !== 'in_call') reasons.push(`phase is ${phase} (observed ${phaseObserved})`);
+    if (autoOpenSuppressed) reasons.push('suppressed after a re-dock');
+  }
+  const block = reasons.join(', ');
+  if (block === lastAutoOpenBlock) return;
+  lastAutoOpenBlock = block;
+  if (block) console.log(`[meetloaf] presentation detected but not auto-opening: ${block}`);
+}
+
 
 
 
@@ -966,6 +987,7 @@ async function pollPhase() {
       }))()
     `);
     if (state && typeof state.phase === 'string') observePhase(state.phase, 'poll');
+    if (state) logAutoOpenBlock(!!state.presenting);
     if (state) syncPresentationWindow(!!state.presenting, await presentationWindowLive());
   } catch {
     // Page mid-navigation or renderer gone — the next tick will catch up.
@@ -1066,8 +1088,10 @@ function copyMeetingLinkIfPending() {
   try {
     const u = new URL(mainWindow.webContents.getURL());
     // Canonical form only. Meet appends ?authuser=… and friends, which nobody
-    // wants pasted into a chat.
-    link = `https://meet.google.com${u.pathname.replace(/\/$/, '')}`;
+    // wants pasted into a chat, and the bare code is the form invites use.
+    const m = u.pathname.match(MEETING_CODE_RE);
+    if (!m) return;
+    link = `https://meet.google.com/${m[1]}`;
   } catch {
     return;
   }
@@ -1097,7 +1121,7 @@ function currentMeetingCode() {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
   try {
     const u = new URL(mainWindow.webContents.getURL());
-    const m = u.pathname.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})/);
+    const m = u.pathname.match(MEETING_CODE_RE);
     return m ? m[1] : null;
   } catch {
     return null;
