@@ -1,4 +1,4 @@
-const MEET_URL_RE = /^https?:\/\/meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|\?|$)/i;
+const MEET_URL_RE = /^https?:\/\/meet\.google\.com\/(?:meet\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|\?|$)/i;
 const BLANK_URL_RE = /^(about:blank|about:newtab|about:home)?$/;
 
 let enabled = true;

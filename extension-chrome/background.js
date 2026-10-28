@@ -23,12 +23,12 @@ const RULE_ALLOW_COMPANION = 2;
 // (the only kind that can match on tabIds) with ids offset by this base.
 const TAB_ALLOW_BASE = 100000;
 
-const MEET_URL_RE = /^https?:\/\/meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:[/?#]|$)/i;
+const MEET_URL_RE = /^https?:\/\/meet\.google\.com\/(?:meet\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})(?:[/?#]|$)/i;
 
 // Companion mode joins without mic, camera or speaker, so it can't put you in
 // the call twice — and it's how MeetLoaf's "Present a Browser Tab" gets
 // Chrome's own tab sharing. Let these links load in the browser.
-const COMPANION_RE = /^https?:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\?(?:[^#]*&)?companion=1(?:[&#]|$)/i;
+const COMPANION_RE = /^https?:\/\/meet\.google\.com\/(?:meet\/)?[a-z]{3}-[a-z]{4}-[a-z]{3}\?(?:[^#]*&)?companion=1(?:[&#]|$)/i;
 
 function rules() {
   const handoff = chrome.runtime.getURL('handoff.html');
@@ -41,9 +41,11 @@ function rules() {
         redirect: { regexSubstitution: `${handoff}#\\1` }
       },
       condition: {
-        // Only meeting codes — the Meet home page, /landing, /lookup etc.
-        // still open normally in the browser.
-        regexFilter: '^https?://meet\\.google\\.com/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:[/?#].*)?$',
+        // Only meeting codes, bare or under /meet/ (the form Meet switched to
+        // in late 2026) — the Meet home page, /landing, /lookup etc. still
+        // open normally in the browser. The prefix group is non-capturing so
+        // the code stays group 1.
+        regexFilter: '^https?://meet\\.google\\.com/(?:meet/)?([a-z]{3}-[a-z]{4}-[a-z]{3})(?:[/?#].*)?$',
         resourceTypes: ['main_frame']
       }
     },
@@ -52,7 +54,7 @@ function rules() {
       priority: 2,
       action: { type: 'allow' },
       condition: {
-        regexFilter: '^https?://meet\\.google\\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}\\?([^#]*&)?companion=1([&#].*)?$',
+        regexFilter: '^https?://meet\\.google\\.com/(?:meet/)?[a-z]{3}-[a-z]{4}-[a-z]{3}\\?([^#]*&)?companion=1([&#].*)?$',
         resourceTypes: ['main_frame']
       }
     }
