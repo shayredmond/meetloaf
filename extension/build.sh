@@ -2,16 +2,20 @@
 # Sign the Firefox extension via Mozilla's web-ext + AMO API, then copy the
 # resulting .xpi into app/ so it ships inside MeetLoaf.app.
 #
+# Normally you don't need this: .github/workflows/sign-firefox.yml signs on
+# every push to main that bumps "version" in manifest.json, and opens a PR
+# with the new app/firefox-extension.xpi. This script is the manual fallback,
+# e.g. when the workflow can't run or you want to sign from a branch.
+#
 # One-time setup:
 #   1. Get an AMO API key at https://addons.mozilla.org/developers/addon/api/key/
 #   2. Export the credentials before running this script:
 #        export WEB_EXT_API_KEY='user:1234567:89'
 #        export WEB_EXT_API_SECRET='hex...'
 #
-# Run this whenever the extension code changes, then COMMIT the resulting
-# app/firefox-extension.xpi. CI builds the app from a clean checkout and never
-# runs this script, so an uncommitted XPI means every release ships without the
-# extension. Bump "version" in manifest.json first — AMO rejects a re-upload of
+# If you do run it, COMMIT the resulting app/firefox-extension.xpi. The release
+# build bundles the committed file and never signs anything, so an uncommitted
+# XPI means every release ships without the extension. Bump "version" in manifest.json first — AMO rejects a re-upload of
 # a version it has already seen for this add-on ID.
 set -euo pipefail
 
@@ -31,6 +35,7 @@ rm -rf web-ext-artifacts
 # the file can install it permanently in regular Firefox.
 npx --yes web-ext sign \
   --channel=unlisted \
+  --ignore-files build.sh \
   --api-key="$WEB_EXT_API_KEY" \
   --api-secret="$WEB_EXT_API_SECRET"
 

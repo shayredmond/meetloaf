@@ -353,22 +353,28 @@ We ad-hoc sign (`codesign --sign -`). That's enough to satisfy Apple Silicon's "
 
 Best path for a permanent install: bundle a signed XPI inside MeetLoaf so colleagues can install it from **Settings → Routing → Install**.
 
-### One-time setup (developer)
+### Signing (developer)
+
+Signing runs in CI. [`.github/workflows/sign-firefox.yml`](.github/workflows/sign-firefox.yml) runs on every push to `main` that touches `extension/`. If `version` in `extension/manifest.json` differs from the version inside the committed `app/firefox-extension.xpi`, it signs the extension with `web-ext sign --channel=unlisted` (signed by Mozilla, not listed publicly) and opens a PR that updates the `.xpi`. Merge that PR, then tag. A push that doesn't bump the version does nothing, because AMO rejects a version it has already seen for this add-on ID.
+
+One-time setup:
 
 1. Get an AMO API key at https://addons.mozilla.org/developers/addon/api/key/.
-2. Sign + bundle:
-   ```sh
-   cd extension
-   export WEB_EXT_API_KEY='user:xxxxxxx:xx'
-   export WEB_EXT_API_SECRET='hex...'
-   ./build.sh
-   ```
-   This calls `web-ext sign --channel=unlisted` (signed by Mozilla, not listed publicly), then drops the resulting `.xpi` into `app/firefox-extension.xpi`. **Commit that file** — see the note below. Bump `version` in `extension/manifest.json` before each re-sign; AMO rejects a version it has already seen for this add-on ID.
-3. Rebuild the desktop app:
-   ```sh
-   cd ../app && npm run dist
-   ```
-   The XPI is now bundled inside `MeetLoaf.app`.
+2. Add it under **Settings → Secrets and variables → Actions** as `AMO_API_KEY` (the JWT issuer, `user:…`) and `AMO_API_SECRET` (the JWT secret).
+3. Under **Settings → Actions → General → Workflow permissions**, tick **Allow GitHub Actions to create and approve pull requests**. Without it the workflow signs the extension but can't open the PR.
+
+Mozilla usually approves unlisted versions within minutes, but they can sit in a queue. The workflow waits up to 45 minutes. If it times out, the version is already uploaded, so don't bump it. Re-run the workflow (**Actions → Sign Firefox extension → Run workflow**) once AMO approves it, and it downloads the signed file instead of uploading again. The PR the workflow opens doesn't trigger **Build & Release** by itself; close and reopen it if you want the builds first.
+
+**Manual fallback.** `extension/build.sh` does the same signing locally:
+
+```sh
+cd extension
+export WEB_EXT_API_KEY='user:xxxxxxx:xx'
+export WEB_EXT_API_SECRET='hex...'
+./build.sh
+```
+
+It drops the signed `.xpi` into `app/firefox-extension.xpi`. **Commit that file**; see the note below. Then rebuild the desktop app (`cd ../app && npm run dist`) to bundle it.
 
 ### For colleagues
 
@@ -376,9 +382,9 @@ Open MeetLoaf → **Settings (⌘,) → Routing → Install**. MeetLoaf detects 
 
 Re-sign + redistribute the app whenever the extension code changes — the signed XPI carries a version that has to match what's published.
 
-> **The add-on ID changed** to `meetloaf@shayredmond.github.io`. AMO identifies an add-on by that ID, so this counts as a brand-new add-on: the first `./build.sh` after this creates a fresh unlisted listing, and `app/firefox-extension.xpi` has to be regenerated before the bundled installer works again. Anyone running the old extension keeps it until they install the new one — worth having them remove the old one, or both will try to route the same links.
+> **The add-on ID changed** to `meetloaf@shayredmond.github.io`. AMO identifies an add-on by that ID, so this counts as a brand-new add-on: the first signing run after this creates a fresh unlisted listing, and `app/firefox-extension.xpi` has to be regenerated before the bundled installer works again. Anyone running the old extension keeps it until they install the new one — worth having them remove the old one, or both will try to route the same links.
 
-> **Commit the signed XPI.** `app/firefox-extension.xpi` is tracked on purpose, even though it's a build artifact. CI builds the app from a clean checkout and never runs `extension/build.sh`, so an uncommitted XPI means every published release ships without the extension and **Settings → Routing → Install** reports it as missing. Sign, commit the `.xpi`, then tag.
+> **Commit the signed XPI.** `app/firefox-extension.xpi` is tracked on purpose, even though it's a build artifact. The release build bundles the committed file and never signs anything, so if the XPI isn't committed, every published release ships without the extension and **Settings → Routing → Install** reports it as missing. Merge the signing PR (or commit the `.xpi` from `build.sh`), then tag.
 
 ### Alternative — temporary load (no signing)
 
