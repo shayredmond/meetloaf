@@ -1,0 +1,164 @@
+name: Sign Firefox extension
+
+# Signs extension/ through Mozilla's AMO API and opens a PR that updates the
+# committed app/firefox-extension.xpi. release.yml bundles that file as it is
+# and never signs anything, so this is the step that turns an extension change
+# into a shippable XPI. extension/build.sh still does the same job by hand.
+#
+# Never add pull_request or pull_request_target here. Fork PRs don't get the
+# AMO secrets, and pull_request_target would run untrusted code with them.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'extension/**'
+  # Re-run after AMO approves a version an earlier run uploaded, or after
+  # adding the secrets.
+  workflow_dispatch:
+
+# Read-only by default; the sign job asks for what it needs itself.
+permissions:
+  contents: read
+
+# Two runs uploading the same version would race, and the loser fails with
+# "version already exists". Queue them instead; never cancel a run that may be
+# mid-upload.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign and open a PR
+    runs-on: ubuntu-latest
+    # Covers the approval wait below plus setup and the PR.
+    timeout-minutes: 60
+    permissions:
+      contents: write # push the PR branch
+      pull-requests: write # open the PR
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # AMO rejects a version it has already seen, so signing on every push to
+      # extension/ would fail on every commit that doesn't bump the version.
+      # Only sign when the manifest has moved past the committed XPI.
+      - name: Compare manifest with the committed XPI
+        id: ver
+        run: |
+          WANT=$(node -p "require('./extension/manifest.json').version")
+          GUID=$(node -p "require('./extension/manifest.json').browser_specific_settings.gecko.id")
+          if [ -f app/firefox-extension.xpi ]; then
+            HAVE=$(unzip -p app/firefox-extension.xpi manifest.json | node -e \
+              "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+          else
+            HAVE=none
+          fi
+          echo "manifest.json: $WANT, committed XPI: $HAVE"
+          {
+            echo "want=$WANT"
+            echo "guid=$GUID"
+            echo "needed=$([ "$WANT" != "$HAVE" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$WANT" = "$HAVE" ]; then
+            echo "::notice::app/firefox-extension.xpi is already $WANT. Nothing to sign; bump \"version\" in extension/manifest.json to sign a new one."
+          fi
+
+      - name: Check for AMO credentials
+        if: steps.ver.outputs.needed == 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+        run: |
+          if [ -z "$WEB_EXT_API_KEY" ] || [ -z "$WEB_EXT_API_SECRET" ]; then
+            echo "::error::AMO_API_KEY / AMO_API_SECRET are not set. Add them under Settings → Secrets and variables → Actions (from https://addons.mozilla.org/developers/addon/api/key/), then re-run this workflow."
+            exit 1
+          fi
+
+      # A previous run may have uploaded this version and timed out waiting
+      # for approval. web-ext can't pick that up again (it would try to submit
+      # the version a second time and be refused), so ask AMO directly and
+      # download the signed file if it's there.
+      - name: Look for this version on AMO
+        id: amo
+        if: steps.ver.outputs.needed == 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+          GUID: ${{ steps.ver.outputs.guid }}
+          VERSION: ${{ steps.ver.outputs.want }}
+        run: |
+          set +e
+          node .github/scripts/amo-fetch-signed.mjs "$GUID" "$VERSION" "$RUNNER_TEMP/signed.xpi"
+          CODE=$?
+          set -e
+          case $CODE in
+            0) echo "upload=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "upload=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "::error::AMO already has $VERSION but hasn't approved it yet. Re-run this workflow once it's approved (https://addons.mozilla.org/developers/addons), or download the signed file from there and commit it as app/firefox-extension.xpi."
+               exit 1 ;;
+            *) exit 1 ;;
+          esac
+
+      # Unlisted versions are usually signed automatically within minutes, but
+      # can sit in a queue. 45 minutes leaves room inside the job's 60.
+      - name: Sign with web-ext
+        if: steps.amo.outputs.upload == 'true'
+        working-directory: extension
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+          VERSION: ${{ steps.ver.outputs.want }}
+        run: |
+          OUT="$RUNNER_TEMP/web-ext-artifacts"
+          if ! npx --yes web-ext@10.8.0 sign \
+              --channel=unlisted \
+              --ignore-files build.sh \
+              --artifacts-dir "$OUT" \
+              --approval-timeout 2700000; then
+            echo "::error::web-ext sign failed. If the log above shows the upload went through (e.g. an approval timeout), AMO now has $VERSION: don't bump the version. Re-run this workflow once AMO approves it and it will download the signed file, or download it from https://addons.mozilla.org/developers/addons and commit it as app/firefox-extension.xpi."
+            exit 1
+          fi
+          XPI=$(find "$OUT" -name "*.xpi" | head -n1)
+          cp "$XPI" "$RUNNER_TEMP/signed.xpi"
+
+      # Guards against shipping a file for the wrong version, whichever path
+      # produced it.
+      - name: Install the signed XPI
+        if: steps.ver.outputs.needed == 'true'
+        env:
+          VERSION: ${{ steps.ver.outputs.want }}
+        run: |
+          GOT=$(unzip -p "$RUNNER_TEMP/signed.xpi" manifest.json | node -e \
+            "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+          if [ "$GOT" != "$VERSION" ]; then
+            echo "::error::Signed XPI is version $GOT, expected $VERSION"
+            exit 1
+          fi
+          unzip -l "$RUNNER_TEMP/signed.xpi" | grep -q 'META-INF/mozilla.rsa' || {
+            echo "::error::The XPI has no Mozilla signature (META-INF/mozilla.rsa)"; exit 1; }
+          cp "$RUNNER_TEMP/signed.xpi" app/firefox-extension.xpi
+
+      # A PR rather than a push to main, so the binary change gets a look
+      # before it ships. Pinned to a commit because this step holds a token
+      # that can write to the repo.
+      - name: Open a PR with the signed XPI
+        if: steps.ver.outputs.needed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          add-paths: app/firefox-extension.xpi
+          branch: sign-firefox/${{ steps.ver.outputs.want }}
+          commit-message: Sign Firefox extension ${{ steps.ver.outputs.want }}
+          title: Sign Firefox extension ${{ steps.ver.outputs.want }}
+          body: |
+            Updates `app/firefox-extension.xpi` to extension ${{ steps.ver.outputs.want }}, signed by Mozilla on the unlisted channel.
+
+            Opened by the [Sign Firefox extension](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow from ${{ github.sha }}.
+
+            PRs opened with the workflow token don't trigger other workflows, so **Build & Release** won't run here on its own. Close and reopen the PR to start it if you want the builds before merging.
+          delete-branch: true
