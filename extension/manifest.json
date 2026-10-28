@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "MeetLoaf Router",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Opens Google Meet links in the MeetLoaf desktop app.",
   "browser_specific_settings": {
     "gecko": {
       "id": "meetloaf@shayredmond.github.io",
-      "strict_min_version": "115.0"
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "permissions": ["webRequest", "webRequestBlocking", "storage", "tabs"],
