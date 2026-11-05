@@ -1944,8 +1944,9 @@ function createWindow() {
 
 }
 
+// Resolves true if a matching control was found and clicked.
 function clickByAriaLabel(patternSource) {
-  if (!mainWindow) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return Promise.resolve(false);
   const js = `
     (() => {
       const re = new RegExp(${JSON.stringify(patternSource)}, 'i');
@@ -1959,7 +1960,17 @@ function clickByAriaLabel(patternSource) {
       return false;
     })();
   `;
-  mainWindow.webContents.executeJavaScript(js).catch(() => {});
+  return mainWindow.webContents.executeJavaScript(js).then((ok) => ok === true, () => false);
+}
+
+// Cmd+W: hang up if connected. Outside a call there's no "Leave call" button —
+// the pre-join screen and the "You left the meeting" screen have none — so
+// Cmd+W did nothing and you were stuck there with no way back but the mouse.
+// Fall back to the Meet home page whenever we're still on a meeting URL.
+async function leaveMeeting() {
+  if (await clickByAriaLabel('leave call')) return;
+  if (!isInActiveMeeting()) return;
+  mainWindow.loadURL(MEET_URL);
 }
 
 function parseRepoSlug() {
@@ -2754,7 +2765,7 @@ const SHORTCUT_ACTIONS = {
   newMeeting: () => startInstantMeeting(),
   presentation: () => togglePresentationWindow(),
   presentTab: () => presentInBrowser(),
-  leave: () => clickByAriaLabel('leave call')
+  leave: () => leaveMeeting()
 };
 
 const gotLock = app.requestSingleInstanceLock();
