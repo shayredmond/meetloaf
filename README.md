@@ -204,7 +204,7 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
 
 **Start instant meeting** creates a meeting and puts its link on your clipboard, ready to paste. It's unbound by default; bind it to something global and you can spin up a call from any app. It works by loading `meet.google.com/new` and reading the meeting URL Meet redirects to — no clicking around Meet's UI, so it doesn't break when Meet moves a button. Pressed while you're already in a call it does nothing, rather than navigating away and hanging up on you.
 
-**Leave meeting** is bound to `⌘W` out of the box. It's local-only (not global) on purpose — a global `⌘W` would hijack window-close everywhere, so it only hangs up while MeetLoaf is focused. Clear or rebind it in Settings like any other shortcut.
+**Leave meeting** is bound to `⌘W` out of the box. It's local-only (not global) on purpose — a global `⌘W` would hijack window-close everywhere, so it only hangs up while MeetLoaf is focused. On the pre-join screen or the "You left the meeting" screen, where there's no call to hang up, it takes you back to the Meet home page instead. Clear or rebind it in Settings like any other shortcut.
 
 Hand-edits use [Electron's accelerator syntax](https://www.electronjs.org/docs/latest/api/accelerator). Each shortcut is `{ "accelerator": "…", "global": true|false }`; a bare string is treated as a global binding. Empty string = unbound. Restart the app after hand-editing.
 
