@@ -117,7 +117,7 @@ AppImages need FUSE 2: `sudo apt install libfuse2t64` on 24.04 (`libfuse2` on 22
 Differences from macOS:
 
 - **Shortcuts** use Ctrl where macOS uses ⌘, as on Windows.
-- **Global hotkeys on Wayland don't register from inside the app.** On GNOME 50, every `globalShortcut.register()` fails ([electron#51875](https://github.com/electron/electron/issues/51875); still failing on Electron 44.7). MeetLoaf logs `Shortcut unavailable` for each one. Bind them in GNOME instead: every action can be triggered by running `meetloaf --shortcut=<name>` (`mute`, `camera`, `hand`, `toggleWindow`, `newMeeting`, `presentation`, `presentTab`, `leave`). The running app performs it without raising its window. Add one under *Settings → Keyboard → View and Customise Shortcuts → Custom Shortcuts*, or from a terminal:
+- **Global hotkeys on Wayland don't register from inside the app.** On GNOME 50, every `globalShortcut.register()` fails ([electron#51875](https://github.com/electron/electron/issues/51875); still failing on Electron 44.7). MeetLoaf logs `Shortcut unavailable` for each one. Bind them in GNOME instead: every action can be triggered by running `meetloaf --shortcut=<name>` (`mute`, `camera`, `hand`, `toggleWindow`, `newMeeting`, `presentation`, `presentTab`, `share`, `leave`). The running app performs it without raising its window. Add one under *Settings → Keyboard → View and Customise Shortcuts → Custom Shortcuts*, or from a terminal:
   ```sh
   p=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/meetloaf-mute/
   s=org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$p
@@ -195,6 +195,7 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
     "toggleWindow": "Cmd+Shift+Backslash",
     "newMeeting": "Cmd+Shift+N",
     "presentTab": "Cmd+Shift+P",
+    "share": "Cmd+Shift+S",
     "leave": { "accelerator": "Cmd+W", "global": false }
   },
   "window": { "width": 1200, "height": 800, "startFullScreen": false, "popOutPresentation": true, "presentBrowserTab": true, "hideDock": false, "meetDarkTheme": true },
@@ -203,6 +204,8 @@ Under the hood it writes `~/.config/meetloaf/config.json` (or `$XDG_CONFIG_HOME/
 ```
 
 **Start instant meeting** creates a meeting and puts its link on your clipboard, ready to paste. It's unbound by default; bind it to something global and you can spin up a call from any app. It works by loading `meet.google.com/new` and reading the meeting URL Meet redirects to — no clicking around Meet's UI, so it doesn't break when Meet moves a button. Pressed while you're already in a call it does nothing, rather than navigating away and hanging up on you.
+
+**Share screen** presses Meet's own *Share screen* button while you're in a call, so the usual picker opens: MeetLoaf's own on Windows and X11, the system's screen-sharing dialog on Wayland and macOS. It's unbound by default; bind it globally to start presenting without hunting for the button, or run `meetloaf --shortcut=share` from a desk button or automation. Outside a call it does nothing.
 
 **Leave meeting** is bound to `⌘W` out of the box. It's local-only (not global) on purpose — a global `⌘W` would hijack window-close everywhere, so it only hangs up while MeetLoaf is focused. Clear or rebind it in Settings like any other shortcut.
 

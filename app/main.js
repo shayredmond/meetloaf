@@ -104,6 +104,7 @@ const DEFAULT_SHORTCUTS = {
   newMeeting: { accelerator: '', global: true },
   presentation: { accelerator: '', global: true },
   presentTab: { accelerator: '', global: true },
+  share: { accelerator: '', global: true },
   leave: { accelerator: 'CmdOrCtrl+W', global: false }
 };
 
@@ -1962,6 +1963,28 @@ function clickByAriaLabel(patternSource) {
   mainWindow.webContents.executeJavaScript(js).catch(() => {});
 }
 
+// Starts sharing your screen: clicks Meet's own Share screen button, which then
+// opens the usual picker (MeetLoaf's on Windows/X11, the portal on Wayland).
+// Run as a user gesture: Chromium only lets getDisplayMedia() start from one,
+// and a hotkey fired from outside the window isn't. Matches the button by
+// label or by its icon, the same way the Present-a-tab popover finds it.
+function shareScreen() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const js = `
+    (() => {
+      const btn = document.querySelector('button[aria-label="Share screen" i]')
+        || Array.from(document.querySelectorAll('button i.google-symbols'))
+          .find((i) => i.textContent.trim() === 'computer_arrow_up')?.closest('button');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })();
+  `;
+  mainWindow.webContents.executeJavaScript(js, true)
+    .then((ok) => { if (!ok) console.log('[meetloaf] share: no Share screen button (not in a call?)'); })
+    .catch(() => {});
+}
+
 function parseRepoSlug() {
   const url = pkg.repository?.url || '';
   const m = url.match(/github\.com[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
@@ -2754,6 +2777,7 @@ const SHORTCUT_ACTIONS = {
   newMeeting: () => startInstantMeeting(),
   presentation: () => togglePresentationWindow(),
   presentTab: () => presentInBrowser(),
+  share: () => shareScreen(),
   leave: () => clickByAriaLabel('leave call')
 };
 
