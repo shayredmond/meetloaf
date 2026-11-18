@@ -2823,6 +2823,17 @@ if (!gotLock) {
       lastAppliedDockHidden = false;
     }
 
+    // Passkey requests have no UI in Electron on macOS/Linux and would hang
+    // Google sign-in; this makes them fail at once instead. Windows is left
+    // alone: Chromium hands WebAuthn to Windows Hello there, which has its
+    // own UI. See passkey-preload.js.
+    if (process.platform === 'darwin' || process.platform === 'linux') {
+      session.defaultSession.registerPreloadScript({
+        type: 'frame',
+        filePath: path.join(__dirname, 'passkey-preload.js'),
+      });
+    }
+
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
       const allowed = ['media', 'mediaKeySystem', 'notifications', 'display-capture', 'picture-in-picture'];
       callback(allowed.includes(permission));

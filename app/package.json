@@ -121,6 +121,7 @@
     "files": [
       "main.js",
       "main-preload.js",
+      "passkey-preload.js",
       "main-inject.js",
       "wayland-share-inject.js",
       "config.json",
